@@ -4,8 +4,9 @@
  * Wraps Home Assistant's own thermostat card, so it looks and behaves
  * exactly the same, and adds two things just above the card features
  * (e.g. the mode buttons):
- *   - bottom left: humidity (from `humidity_entity`, or the entity's
- *     current_humidity);
+ *   - bottom left: humidity as a small dial like the thermostat's, with the
+ *     percentage inside over a water drop (from `humidity_entity`, or the
+ *     entity's current_humidity);
  *   - bottom right: a sync dot, green when the thermostat has confirmed
  *     every command, red while something is pending, grey if unavailable.
  *
@@ -23,6 +24,7 @@ const TEXT = {
     hvac: "modalità",
     preset: "preset",
     missingEntity: "Specifica un'entità (entity)",
+    humidity: "Umidità",
   },
   en: {
     synced: "Synced: every command confirmed",
@@ -32,8 +34,14 @@ const TEXT = {
     hvac: "mode",
     preset: "preset",
     missingEntity: "Please define an entity",
+    humidity: "Humidity",
   },
 };
+
+// Humidity dial: a 270° arc open at the bottom, like the thermostat's.
+const RING_R = 24;
+const RING_C = 2 * Math.PI * RING_R;
+const RING_ARC = RING_C * 0.75;
 
 const STYLE = `
   :host { display: block; height: 100%; }
@@ -52,9 +60,38 @@ const STYLE = `
     font-size: 14px;
     line-height: 20px;
   }
-  .humidity { display: flex; align-items: center; gap: 2px; }
+  .humidity {
+    position: relative;
+    width: 56px;
+    height: 56px;
+    display: grid;
+    place-items: center;
+  }
   .humidity[hidden] { display: none; }
-  .humidity ha-icon { --mdc-icon-size: 18px; }
+  .humidity svg { position: absolute; inset: 0; overflow: visible; }
+  .humidity .track,
+  .humidity .arc {
+    fill: none;
+    stroke-width: 4;
+    stroke-linecap: round;
+  }
+  .humidity .track { stroke: var(--disabled-color, #bdbdbd); opacity: 0.35; }
+  .humidity .arc {
+    stroke: var(--smarther-humidity-color, #2196f3);
+    transition: stroke-dasharray 0.6s ease;
+  }
+  .humidity ha-icon {
+    position: absolute;
+    --mdc-icon-size: 30px;
+    color: var(--smarther-humidity-color, #2196f3);
+    opacity: 0.18;
+  }
+  .humidity .value {
+    position: relative;
+    color: var(--primary-text-color);
+    font-size: 14px;
+    font-weight: 500;
+  }
   .dot {
     width: 10px;
     height: 10px;
@@ -156,8 +193,17 @@ class SmartherHybridCard extends HTMLElement {
       <div class="wrap">
         <div class="card"></div>
         <div class="overlay">
-          <span class="humidity" hidden>
-            <ha-icon icon="mdi:water-percent"></ha-icon><span class="value"></span>
+          <span class="humidity" role="img" hidden>
+            <svg viewBox="0 0 56 56" aria-hidden="true">
+              <circle class="track" cx="28" cy="28" r="${RING_R}"
+                transform="rotate(135 28 28)"
+                stroke-dasharray="${RING_ARC} ${RING_C}"></circle>
+              <circle class="arc" cx="28" cy="28" r="${RING_R}"
+                transform="rotate(135 28 28)"
+                stroke-dasharray="0 ${RING_C}"></circle>
+            </svg>
+            <ha-icon icon="mdi:water"></ha-icon>
+            <span class="value"></span>
           </span>
           <span class="dot" role="img"></span>
         </div>
@@ -166,6 +212,7 @@ class SmartherHybridCard extends HTMLElement {
     this._overlay = root.querySelector(".overlay");
     this._humidity = root.querySelector(".humidity");
     this._humidityValue = root.querySelector(".humidity .value");
+    this._humidityArc = root.querySelector(".humidity .arc");
     this._dot = root.querySelector(".dot");
   }
 
@@ -214,7 +261,14 @@ class SmartherHybridCard extends HTMLElement {
     }
     this._humidity.hidden = humidity === undefined;
     if (humidity !== undefined) {
-      this._humidityValue.textContent = `${Math.round(humidity)} %`;
+      const pct = Math.min(Math.max(humidity, 0), 100);
+      const label = `${Math.round(humidity)}%`;
+      this._humidityValue.textContent = label;
+      this._humidityArc.setAttribute(
+        "stroke-dasharray",
+        `${(RING_ARC * pct) / 100} ${RING_C}`
+      );
+      this._humidity.setAttribute("aria-label", `${this._t("humidity")} ${label}`);
     }
 
     // Sync dot.
