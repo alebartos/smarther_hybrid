@@ -566,6 +566,7 @@ const SCHEDULE_TEXT = {
     title: "Programma riscaldamento",
     active: "attivo",
     days: ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"],
+    dayNames: ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"],
     empty: "Nessun programma di riscaldamento Netatmo trovato.",
     noNetatmo: "Integrazione Netatmo non trovata o non ancora caricata.",
     error: "Impossibile leggere i programmi",
@@ -574,11 +575,28 @@ const SCHEDULE_TEXT = {
     activate: "Attiva questo programma",
     activating: "Attivazione…",
     activateError: "Attivazione non riuscita",
+    edit: "Modifica",
+    cancel: "Annulla",
+    save: "Salva",
+    saving: "Salvataggio…",
+    saveError: "Salvataggio non riuscito",
+    editHint: "Tocca un giorno per modificarne le fasce. Salva riscrive il programma su Netatmo (prima viene fatta una copia di backup).",
+    addSlot: "Aggiungi fascia",
+    remove: "Rimuovi",
+    copyTo: "Copia su",
+    weekdays: "Lun–Ven",
+    weekend: "Sab–Dom",
+    allDays: "Tutti i giorni",
+    restore: "Ripristina versione precedente",
+    restoreConfirm: "Ripristinare la versione del programma precedente all'ultimo salvataggio?",
+    restoreError: "Ripristino non riuscito",
+    badTimes: "Ogni fascia deve iniziare dopo la precedente.",
   },
   en: {
     title: "Heating schedule",
     active: "active",
     days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+    dayNames: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
     empty: "No Netatmo heating schedule found.",
     noNetatmo: "Netatmo integration not found or not loaded yet.",
     error: "Could not read the schedules",
@@ -587,6 +605,22 @@ const SCHEDULE_TEXT = {
     activate: "Make this schedule active",
     activating: "Activating…",
     activateError: "Could not activate",
+    edit: "Edit",
+    cancel: "Cancel",
+    save: "Save",
+    saving: "Saving…",
+    saveError: "Could not save",
+    editHint: "Tap a day to edit its time slots. Save rewrites the schedule on Netatmo (a backup is kept first).",
+    addSlot: "Add slot",
+    remove: "Remove",
+    copyTo: "Copy to",
+    weekdays: "Mon–Fri",
+    weekend: "Sat–Sun",
+    allDays: "Every day",
+    restore: "Restore previous version",
+    restoreConfirm: "Restore the version saved before the last change?",
+    restoreError: "Could not restore",
+    badTimes: "Each slot must start after the previous one.",
   },
 };
 
@@ -604,16 +638,13 @@ const formatMinutes = (minutes) => {
   return `${String(h).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 };
 
+const parseMinutes = (value) => {
+  const [h, m] = String(value).split(":").map(Number);
+  return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : NaN;
+};
+
 const formatTemp = (value) =>
   value == null ? null : `${Number(value).toFixed(1).replace(/\.0$/, "")}°`;
-
-// Zone temperature: the single room's, or the warmest when several rooms.
-const zoneTemp = (zone) => {
-  const temps = (zone.rooms || [])
-    .map((r) => r.temperature)
-    .filter((t) => t != null);
-  return temps.length ? Math.max(...temps) : null;
-};
 
 // Week split into per-day segments [{day, start, end, zone}] (minutes in day).
 const daySegments = (timetable) => {
@@ -646,6 +677,34 @@ const daySegments = (timetable) => {
   return segments;
 };
 
+// Per-day slots [{start, zone}] (first one at 00:00), from a timetable.
+const daySlots = (timetable) => {
+  const days = [[], [], [], [], [], [], []];
+  for (const seg of daySegments(timetable)) {
+    const slots = days[seg.day];
+    if (!slots.length || slots[slots.length - 1].zone !== seg.zone) {
+      slots.push({ start: seg.start, zone: seg.zone });
+    }
+  }
+  return days;
+};
+
+// Timetable [{m_offset, zone_id}] from per-day slots; repeats are dropped.
+const timetableFromDays = (days) => {
+  const timetable = [];
+  days.forEach((slots, day) =>
+    slots.forEach((slot) => {
+      const last = timetable[timetable.length - 1];
+      if (!last || last.zone_id !== slot.zone) {
+        timetable.push({ m_offset: day * DAY_MINUTES + slot.start, zone_id: slot.zone });
+      }
+    })
+  );
+  return timetable;
+};
+
+const sameZone = (a, b) => String(a) === String(b);
+
 const SCHEDULE_STYLE = `
   ha-card { padding: 16px; }
   .header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
@@ -658,7 +717,7 @@ const SCHEDULE_STYLE = `
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .refresh {
+  .icon-btn {
     border: none;
     background: none;
     color: var(--secondary-text-color);
@@ -668,8 +727,10 @@ const SCHEDULE_STYLE = `
     height: 36px;
     display: grid;
     place-items: center;
+    flex: none;
   }
-  .refresh:hover { background: rgba(var(--rgb-primary-text-color, 0, 0, 0), 0.06); }
+  .icon-btn:hover { background: rgba(var(--rgb-primary-text-color, 0, 0, 0), 0.06); }
+  .icon-btn[disabled] { opacity: 0.4; cursor: default; }
   .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
   .chip {
     display: inline-flex;
@@ -689,21 +750,70 @@ const SCHEDULE_STYLE = `
     background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.15);
     border-color: transparent;
   }
+  .chip[disabled] { opacity: 0.5; cursor: default; }
   .chip .badge { font-size: 12px; color: var(--secondary-text-color); }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 36px;
+    padding: 0 16px;
+    border-radius: 18px;
+    border: none;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    background: none;
+    color: var(--primary-color);
+  }
+  .btn.primary { background: var(--primary-color); color: var(--text-primary-color, #fff); }
+  .btn.outline { border: 1px solid var(--divider-color); }
+  .btn[disabled] { opacity: 0.6; cursor: default; }
+  .activate { margin-bottom: 16px; }
   .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 16px; }
   .zone { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--primary-text-color); }
   .swatch { width: 12px; height: 12px; border-radius: 4px; flex: none; }
   .zone .temp { color: var(--secondary-text-color); }
+  .zones-edit { display: grid; gap: 4px; margin-bottom: 16px; }
+  .zone-row { display: flex; align-items: center; gap: 8px; min-height: 40px; }
+  .zone-row .name { flex: 1; font-size: 14px; color: var(--primary-text-color); }
+  .zone-row .value { min-width: 48px; text-align: center; font-size: 16px; font-variant-numeric: tabular-nums; }
+  .step {
+    width: 36px;
+    height: 36px;
+    border-radius: 12px;
+    border: 1px solid var(--divider-color);
+    background: none;
+    color: var(--primary-text-color);
+    font-size: 18px;
+    cursor: pointer;
+  }
   .week { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center; }
-  .day { font-size: 13px; color: var(--secondary-text-color); }
+  .day {
+    font-size: 13px;
+    color: var(--secondary-text-color);
+    background: none;
+    border: none;
+    padding: 0;
+    font-family: inherit;
+    text-align: start;
+  }
   .day.today { color: var(--primary-text-color); font-weight: 500; }
+  .day.open { color: var(--primary-color); font-weight: 500; }
   .bar {
     position: relative;
     height: 22px;
     border-radius: 6px;
     overflow: hidden;
     background: var(--secondary-background-color, rgba(127, 127, 127, 0.15));
+    border: none;
+    padding: 0;
+    width: 100%;
+    display: block;
   }
+  button.bar { cursor: pointer; }
+  .bar.open { outline: 2px solid var(--primary-color); outline-offset: 2px; }
   .seg { position: absolute; top: 0; bottom: 0; }
   .seg + .seg { box-shadow: inset 1px 0 0 var(--card-background-color, #fff); }
   .now {
@@ -722,25 +832,32 @@ const SCHEDULE_STYLE = `
     font-size: 11px;
     color: var(--secondary-text-color);
   }
-  .message { color: var(--secondary-text-color); padding: 8px 0; }
-  .message.error { color: var(--error-color, #db4437); }
-  .activate {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
+  .panel {
+    margin-top: 16px;
+    padding: 12px;
+    border-radius: 12px;
+    background: var(--secondary-background-color, rgba(127, 127, 127, 0.08));
+  }
+  .panel h3 { margin: 0 0 8px; font-size: 15px; font-weight: 500; color: var(--primary-text-color); }
+  .slot { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .slot input, .slot select {
     height: 36px;
-    padding: 0 16px;
-    margin-bottom: 16px;
-    border: none;
-    border-radius: 18px;
-    background: var(--primary-color);
-    color: var(--text-primary-color, #fff);
+    padding: 0 8px;
+    border-radius: 8px;
+    border: 1px solid var(--divider-color);
+    background: var(--card-background-color, #fff);
+    color: var(--primary-text-color);
     font: inherit;
     font-size: 14px;
-    font-weight: 500;
-    cursor: pointer;
   }
-  .activate[disabled] { opacity: 0.6; cursor: default; }
+  .slot select { flex: 1; min-width: 0; }
+  .slot input[disabled] { opacity: 0.6; }
+  .copy { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; font-size: 13px; color: var(--secondary-text-color); }
+  .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  .actions .spacer { flex: 1; }
+  .hint { font-size: 13px; color: var(--secondary-text-color); margin-bottom: 12px; }
+  .message { color: var(--secondary-text-color); padding: 8px 0; }
+  .message.error { color: var(--error-color, #db4437); }
 `;
 
 class SmartherScheduleCard extends HTMLElement {
@@ -781,17 +898,39 @@ class SmartherScheduleCard extends HTMLElement {
     return { columns: 12, min_columns: 6, rows: "auto" };
   }
 
+  // -- data ------------------------------------------------------------------
+
   async _load() {
     if (!this._hass) return;
     try {
-      const result = await this._hass.callWS({ type: "smarther_hybrid/schedules" });
-      this._homes = result.homes || [];
-      this._netatmoFound = result.netatmo_found !== false;
+      this._apply(await this._hass.callWS({ type: "smarther_hybrid/schedules" }));
       this._error = undefined;
     } catch (err) {
       this._error = err && err.message ? err.message : String(err);
     }
+    // Don't redraw under the user's fingers while editing.
+    if (!this._draft) this._draw();
+  }
+
+  _apply(result) {
+    this._homes = result.homes || [];
+    this._netatmoFound = result.netatmo_found !== false;
+  }
+
+  async _ws(message, errorKey) {
+    this._busy = message.type;
+    this._actionError = undefined;
     this._draw();
+    let ok = false;
+    try {
+      this._apply(await this._hass.callWS(message));
+      ok = true;
+    } catch (err) {
+      const t = scheduleText(this._hass);
+      this._actionError = `${t[errorKey]}: ${err && err.message ? err.message : err}`;
+    }
+    this._busy = undefined;
+    return ok;
   }
 
   _home() {
@@ -804,20 +943,171 @@ class SmartherScheduleCard extends HTMLElement {
     );
   }
 
+  _current(schedules) {
+    return (
+      schedules.find((s) => s.id === this._shown || s.name === this._shown) ||
+      schedules.find((s) => s.selected) ||
+      schedules[0]
+    );
+  }
+
+  // Rooms in the schedule; temperatures and colours are per room.
+  _rooms(schedule) {
+    const rooms = new Map();
+    for (const zone of schedule.zones) {
+      for (const room of zone.rooms || []) rooms.set(room.id, room.name || room.id);
+    }
+    return [...rooms].map(([id, name]) => ({ id, name }));
+  }
+
+  _roomId(schedule) {
+    const rooms = this._rooms(schedule);
+    const wanted = this._room || this._config.room;
+    const room = rooms.find((r) => r.id === wanted || r.name === wanted) || rooms[0];
+    return room && room.id;
+  }
+
+  _temp(schedule, zone, roomId) {
+    if (this._draft && this._draft.id === schedule.id) {
+      const temps = this._draft.temps[String(zone.id)] || {};
+      if (roomId in temps) return temps[roomId];
+    }
+    const room = (zone.rooms || []).find((r) => r.id === roomId);
+    return room ? room.temperature : null;
+  }
+
+  _timetable(schedule) {
+    return this._draft && this._draft.id === schedule.id
+      ? timetableFromDays(this._draft.days)
+      : schedule.timetable;
+  }
+
+  // -- editing ---------------------------------------------------------------
+
+  _startEdit(schedule) {
+    const temps = {};
+    for (const zone of schedule.zones) {
+      temps[String(zone.id)] = Object.fromEntries(
+        (zone.rooms || []).map((r) => [r.id, r.temperature])
+      );
+    }
+    this._draft = { id: schedule.id, temps, days: daySlots(schedule.timetable) };
+    this._openDay = undefined;
+    this._actionError = undefined;
+    this._draw();
+  }
+
+  _cancelEdit() {
+    this._draft = undefined;
+    this._openDay = undefined;
+    this._actionError = undefined;
+    this._draw();
+  }
+
+  _stepTemp(zoneId, roomId, delta) {
+    const temps = this._draft.temps[String(zoneId)];
+    const value = Number(temps[roomId] ?? 20) + delta;
+    temps[roomId] = Math.min(30, Math.max(5, Math.round(value * 2) / 2));
+    this._draw();
+  }
+
+  _setSlot(day, index, field, value) {
+    const slots = this._draft.days[day];
+    if (field === "start") {
+      const minutes = parseMinutes(value);
+      const prev = slots[index - 1];
+      const next = slots[index + 1];
+      if (!Number.isFinite(minutes) || (prev && minutes <= prev.start) || (next && minutes >= next.start)) {
+        this._actionError = scheduleText(this._hass).badTimes;
+        this._draw();
+        return;
+      }
+      slots[index].start = minutes;
+    } else {
+      const zone = this._draft.zoneIds.find((id) => String(id) === value);
+      slots[index].zone = zone;
+    }
+    this._actionError = undefined;
+    this._draw();
+  }
+
+  _addSlot(day) {
+    const slots = this._draft.days[day];
+    const last = slots[slots.length - 1];
+    const start = Math.min(last.start + 60, DAY_MINUTES - 15);
+    if (start <= last.start) return;
+    const zone = this._draft.zoneIds.find((id) => !sameZone(id, last.zone)) ?? last.zone;
+    slots.push({ start, zone });
+    this._draw();
+  }
+
+  _removeSlot(day, index) {
+    this._draft.days[day].splice(index, 1);
+    this._draw();
+  }
+
+  _copyDay(day, targets) {
+    for (const target of targets) {
+      if (target !== day) {
+        this._draft.days[target] = this._draft.days[day].map((slot) => ({ ...slot }));
+      }
+    }
+    this._draw();
+  }
+
+  async _save(homeId, schedule) {
+    const zones = Object.entries(this._draft.temps).map(([id, rooms]) => ({
+      id: (schedule.zones.find((z) => String(z.id) === id) || { id }).id,
+      // Rooms without a temperature are left as they are on Netatmo.
+      rooms: Object.fromEntries(Object.entries(rooms).filter(([, temp]) => temp != null)),
+    }));
+    const ok = await this._ws(
+      {
+        type: "smarther_hybrid/save_schedule",
+        home_id: homeId,
+        schedule_id: schedule.id,
+        zones,
+        timetable: timetableFromDays(this._draft.days),
+      },
+      "saveError"
+    );
+    if (ok) this._draft = undefined;
+    this._draw();
+  }
+
+  async _restore(homeId, schedule) {
+    if (!window.confirm(scheduleText(this._hass).restoreConfirm)) return;
+    const ok = await this._ws(
+      { type: "smarther_hybrid/restore_schedule", home_id: homeId, schedule_id: schedule.id },
+      "restoreError"
+    );
+    if (ok) this._draft = undefined;
+    this._draw();
+  }
+
+  async _switch(homeId, scheduleId) {
+    await this._ws(
+      { type: "smarther_hybrid/switch_schedule", home_id: homeId, schedule_id: scheduleId },
+      "activateError"
+    );
+    this._draw();
+  }
+
+  // -- rendering -------------------------------------------------------------
+
   _draw() {
     if (!this._config) return;
     if (!this.shadowRoot) this.attachShadow({ mode: "open" });
     const t = scheduleText(this._hass);
     const home = this._homes && this._home();
     const schedules = home ? home.schedules : [];
-    const schedule =
-      schedules.find((s) => s.id === this._shown || s.name === this._shown) ||
-      schedules.find((s) => s.selected) ||
-      schedules[0];
+    const schedule = this._current(schedules);
+    const editing = !!(this._draft && schedule && this._draft.id === schedule.id);
+    if (editing) this._draft.zoneIds = schedule.zones.map((z) => z.id);
 
     let body;
     if (this._error) {
-      body = `<div class="message">${escapeHtml(t.error)}: ${escapeHtml(this._error)}</div>`;
+      body = `<div class="message error">${escapeHtml(t.error)}: ${escapeHtml(this._error)}</div>`;
     } else if (!this._homes) {
       body = "";
     } else if (!this._netatmoFound) {
@@ -825,75 +1115,81 @@ class SmartherScheduleCard extends HTMLElement {
     } else if (!schedule) {
       body = `<div class="message">${escapeHtml(t.empty)}</div>`;
     } else {
+      const roomId = this._roomId(schedule);
       body =
-        this._chips(schedules, schedule, t) +
-        this._activate(schedule, t) +
-        this._legend(schedule, t) +
-        this._week(schedule, t);
+        this._chips(schedules, schedule, t, editing) +
+        this._roomChips(schedule, roomId, editing) +
+        (editing ? `<div class="hint">${escapeHtml(t.editHint)}</div>` : this._activate(schedule, t)) +
+        (editing ? this._zonesEdit(schedule, roomId) : this._legend(schedule, roomId, t)) +
+        this._week(schedule, roomId, t, editing) +
+        (editing && this._openDay !== undefined ? this._dayPanel(schedule, t) : "") +
+        (this._actionError ? `<div class="message error">${escapeHtml(this._actionError)}</div>` : "") +
+        (editing ? this._actions(schedule, t) : "");
     }
 
     const title = this._config.title || t.title;
+    const canEdit = schedule && !editing && !this._error;
     this.shadowRoot.innerHTML = `
       <style>${SCHEDULE_STYLE}</style>
       <ha-card>
         <div class="header">
           <div class="title">${escapeHtml(title)}</div>
-          <button class="refresh" type="button" aria-label="refresh">
-            <ha-icon icon="mdi:refresh"></ha-icon>
-          </button>
+          ${canEdit ? `<button class="icon-btn" data-action="edit" type="button" title="${escapeHtml(t.edit)}" aria-label="${escapeHtml(t.edit)}"><ha-icon icon="mdi:pencil"></ha-icon></button>` : ""}
+          ${editing ? "" : `<button class="icon-btn" data-action="refresh" type="button" aria-label="refresh"><ha-icon icon="mdi:refresh"></ha-icon></button>`}
         </div>
         ${body}
       </ha-card>`;
-    this.shadowRoot.querySelector(".refresh").addEventListener("click", () => this._load());
-    const activate = this.shadowRoot.querySelector(".activate");
-    if (activate) {
-      activate.addEventListener("click", () => this._switch(home.id, schedule.id));
-    }
-    this.shadowRoot.querySelectorAll(".chip").forEach((chip) =>
-      chip.addEventListener("click", () => {
-        this._shown = chip.dataset.id;
-        this._draw();
-      })
+    this._bind(home, schedule);
+  }
+
+  _bind(home, schedule) {
+    const root = this.shadowRoot;
+    const on = (selector, event, handler) =>
+      root.querySelectorAll(selector).forEach((el) => el.addEventListener(event, () => handler(el)));
+    on('[data-action="refresh"]', "click", () => this._load());
+    on('[data-action="edit"]', "click", () => this._startEdit(schedule));
+    on('[data-action="cancel"]', "click", () => this._cancelEdit());
+    on('[data-action="save"]', "click", () => this._save(home.id, schedule));
+    on('[data-action="restore"]', "click", () => this._restore(home.id, schedule));
+    on('[data-action="activate"]', "click", () => this._switch(home.id, schedule.id));
+    on(".chip[data-schedule]", "click", (el) => {
+      this._shown = el.dataset.schedule;
+      this._draw();
+    });
+    on(".chip[data-room]", "click", (el) => {
+      this._room = el.dataset.room;
+      this._draw();
+    });
+    on("[data-step]", "click", (el) =>
+      this._stepTemp(el.dataset.zone, el.dataset.room, Number(el.dataset.step))
+    );
+    on("[data-day]", "click", (el) => {
+      const day = Number(el.dataset.day);
+      this._openDay = this._openDay === day ? undefined : day;
+      this._actionError = undefined;
+      this._draw();
+    });
+    on("[data-slot-start]", "change", (el) =>
+      this._setSlot(this._openDay, Number(el.dataset.slotStart), "start", el.value)
+    );
+    on("[data-slot-zone]", "change", (el) =>
+      this._setSlot(this._openDay, Number(el.dataset.slotZone), "zone", el.value)
+    );
+    on("[data-slot-remove]", "click", (el) =>
+      this._removeSlot(this._openDay, Number(el.dataset.slotRemove))
+    );
+    on('[data-action="add-slot"]', "click", () => this._addSlot(this._openDay));
+    on("[data-copy]", "click", (el) =>
+      this._copyDay(this._openDay, el.dataset.copy.split(",").map(Number))
     );
   }
 
-  _activate(schedule, t) {
-    const error = this._switchError
-      ? `<div class="message error">${escapeHtml(t.activateError)}: ${escapeHtml(this._switchError)}</div>`
-      : "";
-    if (schedule.selected) return error;
-    const busy = this._switching === schedule.id;
-    return `
-      <button class="activate" type="button" ${busy ? "disabled" : ""}>
-        <ha-icon icon="mdi:calendar-check" style="--mdc-icon-size:18px"></ha-icon>
-        ${escapeHtml(busy ? t.activating : t.activate)}
-      </button>${error}`;
-  }
-
-  async _switch(homeId, scheduleId) {
-    this._switching = scheduleId;
-    this._switchError = undefined;
-    this._draw();
-    try {
-      const result = await this._hass.callWS({
-        type: "smarther_hybrid/switch_schedule",
-        home_id: homeId,
-        schedule_id: scheduleId,
-      });
-      this._homes = result.homes || this._homes;
-    } catch (err) {
-      this._switchError = err && err.message ? err.message : String(err);
-    }
-    this._switching = undefined;
-    this._draw();
-  }
-
-  _chips(schedules, current, t) {
+  _chips(schedules, current, t, editing) {
     if (schedules.length < 2) return "";
     const chips = schedules
       .map(
         (s) => `
-        <button class="chip ${s.id === current.id ? "current" : ""}" type="button" data-id="${escapeHtml(s.id)}">
+        <button class="chip ${s.id === current.id ? "current" : ""}" type="button" data-schedule="${escapeHtml(s.id)}" ${editing ? "disabled" : ""}>
           ${s.selected ? '<ha-icon icon="mdi:check" style="--mdc-icon-size:16px"></ha-icon>' : ""}
           ${escapeHtml(s.name)}
           ${s.selected ? `<span class="badge">${escapeHtml(t.active)}</span>` : ""}
@@ -903,32 +1199,60 @@ class SmartherScheduleCard extends HTMLElement {
     return `<div class="chips">${chips}</div>`;
   }
 
-  _zoneColors(schedule) {
-    const temps = schedule.zones.map(zoneTemp).filter((v) => v != null);
+  _roomChips(schedule, roomId) {
+    const rooms = this._rooms(schedule);
+    if (rooms.length < 2) return "";
+    const chips = rooms
+      .map(
+        (r) => `
+        <button class="chip ${r.id === roomId ? "current" : ""}" type="button" data-room="${escapeHtml(r.id)}">
+          <ha-icon icon="mdi:door" style="--mdc-icon-size:16px"></ha-icon>${escapeHtml(r.name)}
+        </button>`
+      )
+      .join("");
+    return `<div class="chips">${chips}</div>`;
+  }
+
+  _activate(schedule, t) {
+    if (schedule.selected) return "";
+    const busy = this._busy === "smarther_hybrid/switch_schedule";
+    return `
+      <button class="btn primary activate" data-action="activate" type="button" ${busy ? "disabled" : ""}>
+        <ha-icon icon="mdi:calendar-check" style="--mdc-icon-size:18px"></ha-icon>
+        ${escapeHtml(busy ? t.activating : t.activate)}
+      </button>`;
+  }
+
+  // Same temperature, same colour: from cool blue to warm orange.
+  _zoneColors(schedule, roomId) {
+    const temps = schedule.zones
+      .map((z) => this._temp(schedule, z, roomId))
+      .filter((v) => v != null)
+      .map(Number);
     const min = Math.min(...temps);
     const max = Math.max(...temps);
     const colors = {};
     for (const zone of schedule.zones) {
-      const temp = zoneTemp(zone);
+      const temp = this._temp(schedule, zone, roomId);
       if (temp == null) {
-        colors[zone.id] = "var(--disabled-color, #bdbdbd)";
+        colors[String(zone.id)] = "var(--disabled-color, #bdbdbd)";
         continue;
       }
-      const k = max > min ? (temp - min) / (max - min) : 1;
+      const k = max > min ? (Number(temp) - min) / (max - min) : 1;
       const rgb = COOL_RGB.map((c, i) => Math.round(c + (WARM_RGB[i] - c) * k));
-      colors[zone.id] = `rgb(${rgb.join(",")})`;
+      colors[String(zone.id)] = `rgb(${rgb.join(",")})`;
     }
     return colors;
   }
 
-  _legend(schedule, t) {
-    const colors = this._zoneColors(schedule);
+  _legend(schedule, roomId, t) {
+    const colors = this._zoneColors(schedule, roomId);
     const zones = schedule.zones
       .map((zone) => {
-        const temp = formatTemp(zoneTemp(zone)) || t.noTemp;
+        const temp = formatTemp(this._temp(schedule, zone, roomId)) || t.noTemp;
         return `
           <span class="zone">
-            <span class="swatch" style="background:${colors[zone.id]}"></span>
+            <span class="swatch" style="background:${colors[String(zone.id)]}"></span>
             ${escapeHtml(zone.name || zone.id)}
             <span class="temp">${escapeHtml(temp)}</span>
           </span>`;
@@ -937,10 +1261,30 @@ class SmartherScheduleCard extends HTMLElement {
     return `<div class="legend">${zones}</div>`;
   }
 
-  _week(schedule, t) {
-    const colors = this._zoneColors(schedule);
-    const names = Object.fromEntries(schedule.zones.map((z) => [z.id, z.name || z.id]));
-    const segments = daySegments(schedule.timetable);
+  _zonesEdit(schedule, roomId) {
+    const colors = this._zoneColors(schedule, roomId);
+    const rows = schedule.zones
+      .map((zone) => {
+        const temp = this._temp(schedule, zone, roomId);
+        if (temp == null) return "";
+        const data = `data-zone="${escapeHtml(zone.id)}" data-room="${escapeHtml(roomId)}"`;
+        return `
+          <div class="zone-row">
+            <span class="swatch" style="background:${colors[String(zone.id)]}"></span>
+            <span class="name">${escapeHtml(zone.name || zone.id)}</span>
+            <button class="step" type="button" ${data} data-step="-0.5" aria-label="−">−</button>
+            <span class="value">${escapeHtml(formatTemp(temp))}</span>
+            <button class="step" type="button" ${data} data-step="0.5" aria-label="+">+</button>
+          </div>`;
+      })
+      .join("");
+    return `<div class="zones-edit">${rows}</div>`;
+  }
+
+  _week(schedule, roomId, t, editing) {
+    const colors = this._zoneColors(schedule, roomId);
+    const names = Object.fromEntries(schedule.zones.map((z) => [String(z.id), z.name || z.id]));
+    const segments = daySegments(this._timetable(schedule));
     const now = new Date();
     const today = (now.getDay() + 6) % 7;
     const nowLeft = ((now.getHours() * 60 + now.getMinutes()) / DAY_MINUTES) * 100;
@@ -952,17 +1296,75 @@ class SmartherScheduleCard extends HTMLElement {
         .map((s) => {
           const left = (s.start / DAY_MINUTES) * 100;
           const width = ((s.end - s.start) / DAY_MINUTES) * 100;
-          const tip = `${names[s.zone] || s.zone} · ${formatMinutes(s.start)}–${formatMinutes(s.end)}`;
-          return `<div class="seg" title="${escapeHtml(tip)}" style="left:${left}%;width:${width}%;background:${colors[s.zone] || "var(--disabled-color)"}"></div>`;
+          const tip = `${names[String(s.zone)] || s.zone} · ${formatMinutes(s.start)}–${formatMinutes(s.end)}`;
+          return `<div class="seg" title="${escapeHtml(tip)}" style="left:${left}%;width:${width}%;background:${colors[String(s.zone)] || "var(--disabled-color)"}"></div>`;
         })
         .join("");
-      const marker = day === today ? `<div class="now" style="left:${nowLeft}%"></div>` : "";
-      rows += `
-        <div class="day ${day === today ? "today" : ""}">${escapeHtml(t.days[day])}</div>
-        <div class="bar">${segs}${marker}</div>`;
+      const marker = day === today && !editing ? `<div class="now" style="left:${nowLeft}%"></div>` : "";
+      const open = editing && this._openDay === day ? "open" : "";
+      const dayCls = `day ${day === today ? "today" : ""} ${open}`;
+      rows += editing
+        ? `<button class="${dayCls}" type="button" data-day="${day}">${escapeHtml(t.days[day])}</button>
+           <button class="bar ${open}" type="button" data-day="${day}" aria-label="${escapeHtml(t.dayNames[day])}">${segs}</button>`
+        : `<div class="${dayCls}">${escapeHtml(t.days[day])}</div>
+           <div class="bar">${segs}${marker}</div>`;
     }
     const axis = ["0", "6", "12", "18", "24"].map((h) => `<span>${h}</span>`).join("");
     return `<div class="week">${rows}<div class="axis">${axis}</div></div>`;
+  }
+
+  _dayPanel(schedule, t) {
+    const day = this._openDay;
+    const slots = this._draft.days[day];
+    const options = (selected) =>
+      schedule.zones
+        .map(
+          (z) =>
+            `<option value="${escapeHtml(z.id)}" ${sameZone(z.id, selected) ? "selected" : ""}>${escapeHtml(z.name || z.id)}</option>`
+        )
+        .join("");
+    const rows = slots
+      .map(
+        (slot, i) => `
+        <div class="slot">
+          <input type="time" step="900" value="${formatMinutes(slot.start)}" data-slot-start="${i}" ${i === 0 ? "disabled" : ""}>
+          <select data-slot-zone="${i}">${options(slot.zone)}</select>
+          ${i === 0 ? '<span style="width:36px"></span>' : `<button class="icon-btn" type="button" data-slot-remove="${i}" title="${escapeHtml(t.remove)}" aria-label="${escapeHtml(t.remove)}"><ha-icon icon="mdi:delete-outline"></ha-icon></button>`}
+        </div>`
+      )
+      .join("");
+    return `
+      <div class="panel">
+        <h3>${escapeHtml(t.dayNames[day])}</h3>
+        ${rows}
+        <button class="btn" type="button" data-action="add-slot">
+          <ha-icon icon="mdi:plus" style="--mdc-icon-size:18px"></ha-icon>${escapeHtml(t.addSlot)}
+        </button>
+        <div class="copy">
+          ${escapeHtml(t.copyTo)}:
+          <button class="chip" type="button" data-copy="0,1,2,3,4">${escapeHtml(t.weekdays)}</button>
+          <button class="chip" type="button" data-copy="5,6">${escapeHtml(t.weekend)}</button>
+          <button class="chip" type="button" data-copy="0,1,2,3,4,5,6">${escapeHtml(t.allDays)}</button>
+        </div>
+      </div>`;
+  }
+
+  _actions(schedule, t) {
+    const saving = this._busy === "smarther_hybrid/save_schedule";
+    const restoring = this._busy === "smarther_hybrid/restore_schedule";
+    const busy = saving || restoring;
+    const restore = schedule.backups
+      ? `<button class="btn" type="button" data-action="restore" ${busy ? "disabled" : ""}>
+           <ha-icon icon="mdi:history" style="--mdc-icon-size:18px"></ha-icon>${escapeHtml(t.restore)}
+         </button>`
+      : "";
+    return `
+      <div class="actions">
+        ${restore}
+        <span class="spacer"></span>
+        <button class="btn outline" type="button" data-action="cancel" ${busy ? "disabled" : ""}>${escapeHtml(t.cancel)}</button>
+        <button class="btn primary" type="button" data-action="save" ${busy ? "disabled" : ""}>${escapeHtml(saving ? t.saving : t.save)}</button>
+      </div>`;
   }
 }
 

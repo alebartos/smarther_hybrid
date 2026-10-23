@@ -167,3 +167,125 @@ async def test_ws_schedules_legacy_hass_data(hass, hass_ws_client):
     msg = await client.receive_json()
     assert msg["result"]["netatmo_found"] is True
     assert msg["result"]["homes"][0]["schedules"][0]["name"] == "Inverno"
+
+
+class FakeAuth:
+    """Records synchomeschedule requests."""
+
+    def __init__(self, status="ok"):
+        self.requests = []
+        self.status = status
+
+    async def async_post_api_request(self, endpoint, params):
+        self.requests.append((endpoint, params))
+        status = self.status
+
+        class Resp:
+            async def json(self):
+                return {"status": status}
+
+        return Resp()
+
+
+async def _client_for_edit(hass, hass_ws_client, status="ok"):
+    assert await async_setup_component(hass, "websocket_api", {})
+    assert await async_setup_component(hass, DOMAIN, {})
+    home = fake_netatmo(hass)
+    home.auth = FakeAuth(status)
+    return await hass_ws_client(hass), home
+
+
+WEEKDAYS_7_TO_22 = [{"m_offset": 0, "zone_id": 1}] + [
+    entry
+    for day in range(7)
+    for entry in (
+        {"m_offset": day * 1440 + 420, "zone_id": 0},
+        {"m_offset": day * 1440 + 1320, "zone_id": 1},
+    )
+]
+
+
+async def test_save_schedule_keeps_name_and_backs_up(hass, hass_ws_client):
+    client, home = await _client_for_edit(hass, hass_ws_client)
+    await client.send_json(
+        {
+            "id": 1,
+            "type": "smarther_hybrid/save_schedule",
+            "home_id": "h1",
+            "schedule_id": "s1",
+            "zones": [{"id": 0, "rooms": {"r1": 21.5}}],
+            "timetable": WEEKDAYS_7_TO_22,
+        }
+    )
+    msg = await client.receive_json()
+    assert msg["success"], msg
+    ((endpoint, params),) = home.auth.requests
+    assert endpoint == "api/synchomeschedule"
+    assert params["params"] == {"home_id": "h1", "schedule_id": "s1", "name": "Inverno"}
+    body = params["json"]
+    assert body["zones"][0]["rooms"] == [{"id": "r1", "therm_setpoint_temperature": 21.5}]
+    # Unchanged zone keeps its temperature.
+    assert body["zones"][1]["rooms"] == [{"id": "r1", "therm_setpoint_temperature": 17.0}]
+    assert body["timetable"][0] == {"m_offset": 0, "zone_id": 1}
+    assert len(body["timetable"]) == len(WEEKDAYS_7_TO_22)
+    assert msg["result"]["homes"][0]["schedules"][0]["backups"] == 1
+
+
+async def test_save_rejects_bad_schedules(hass, hass_ws_client):
+    client, home = await _client_for_edit(hass, hass_ws_client)
+    bad = [
+        {"zones": [{"id": 0, "rooms": {"r1": 40}}], "timetable": WEEKDAYS_7_TO_22},
+        {"zones": [], "timetable": [{"m_offset": 60, "zone_id": 0}]},
+        {"zones": [], "timetable": [{"m_offset": 0, "zone_id": 9}]},
+    ]
+    for i, data in enumerate(bad, start=1):
+        await client.send_json(
+            {"id": i, "type": "smarther_hybrid/save_schedule", "home_id": "h1", "schedule_id": "s1", **data}
+        )
+        msg = await client.receive_json()
+        assert not msg["success"]
+        assert msg["error"]["code"] == "save_failed"
+    assert home.auth.requests == []
+
+
+async def test_refused_save_leaves_no_backup(hass, hass_ws_client):
+    client, home = await _client_for_edit(hass, hass_ws_client, status="error")
+    await client.send_json(
+        {
+            "id": 1,
+            "type": "smarther_hybrid/save_schedule",
+            "home_id": "h1",
+            "schedule_id": "s1",
+            "zones": [],
+            "timetable": WEEKDAYS_7_TO_22,
+        }
+    )
+    assert not (await client.receive_json())["success"]
+    await client.send_json({"id": 2, "type": "smarther_hybrid/schedules"})
+    msg = await client.receive_json()
+    assert msg["result"]["homes"][0]["schedules"][0]["backups"] == 0
+
+
+async def test_restore_sends_previous_version(hass, hass_ws_client):
+    client, home = await _client_for_edit(hass, hass_ws_client)
+    await client.send_json(
+        {
+            "id": 1,
+            "type": "smarther_hybrid/save_schedule",
+            "home_id": "h1",
+            "schedule_id": "s1",
+            "zones": [{"id": 0, "rooms": {"r1": 23}}],
+            "timetable": WEEKDAYS_7_TO_22,
+        }
+    )
+    assert (await client.receive_json())["success"]
+    await client.send_json(
+        {"id": 2, "type": "smarther_hybrid/restore_schedule", "home_id": "h1", "schedule_id": "s1"}
+    )
+    msg = await client.receive_json()
+    assert msg["success"], msg
+    _, params = home.auth.requests[-1]
+    # The original version: comfort 21°, timetable as it was.
+    assert params["json"]["zones"][0]["rooms"] == [{"id": "r1", "therm_setpoint_temperature": 21.0}]
+    assert params["json"]["timetable"] == [{"m_offset": 0, "zone_id": 1}, {"m_offset": 420, "zone_id": 0}]
+    assert msg["result"]["homes"][0]["schedules"][0]["backups"] == 0

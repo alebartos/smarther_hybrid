@@ -124,19 +124,24 @@ Un comando rifiutato resta rosso finché non ne mandi un altro dello stesso tipo
 
 ## Card del programma
 
-Una seconda card, **Smarther Schedule**, mostra i **programmi di riscaldamento Netatmo**:
+Una seconda card, **Smarther Schedule**, mostra e modifica i **programmi di riscaldamento Netatmo**:
 
-- vista settimanale, una barra per giorno con le fasce colorate per zona (dal blu, più freddo, all'arancione, più caldo) e un indicatore dell'ora attuale;
-- legenda delle zone con la temperatura (passando sopra una fascia: zona e orario);
-- chip per guardare gli altri programmi, con quello attivo segnato;
-- pulsante **Attiva questo programma** quando guardi un programma diverso da quello attivo (lo attiva su Netatmo per id).
+- vista settimanale, una barra per giorno con le fasce colorate per temperatura (dal blu, più freddo, all'arancione, più caldo: stessa temperatura, stesso colore) e un indicatore dell'ora attuale;
+- legenda delle zone con la temperatura; se il programma riguarda più stanze, chip per sceglierne una;
+- chip per guardare gli altri programmi e pulsante **Attiva questo programma**;
+- **✏️ Modifica**:
+  - temperatura di ogni zona con − / + (5–30 °C, passi di 0,5);
+  - tocca un giorno per modificarne le fasce (orario d'inizio, zona, aggiungi / rimuovi) e copiarlo su Lun–Ven, Sab–Dom o tutti i giorni;
+  - **Salva** riscrive il programma su Netatmo **mantenendone il nome**; **Annulla** scarta le modifiche;
+  - prima di ogni salvataggio viene conservata una **copia di backup** (le ultime 10 per programma); **Ripristina versione precedente** la rimette.
 
 ```yaml
 type: custom:smarther-schedule-card
 title: Programma soggiorno   # facoltativo
+room: Soggiorno              # facoltativo, se il programma ha più stanze
 ```
 
-I dati vengono da quelli che l'integrazione Netatmo ha già in memoria (nessuna chiamata in più al cloud) e si aggiornano ogni minuto. Il contenuto dei programmi per ora è in **sola lettura**: la modifica di temperature e fasce arriverà nelle prossime versioni.
+I dati vengono da quelli che l'integrazione Netatmo ha già in memoria (nessuna chiamata in più al cloud per leggerli) e si aggiornano ogni minuto. Consiglio: prova le prime modifiche su un **programma duplicato** creato dall'app.
 
 ## Limiti noti
 
