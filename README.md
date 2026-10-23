@@ -92,7 +92,22 @@ features:
     style: dropdown
 ```
 
-La card ha l'**editor visuale**: è quello della card termostato di Home Assistant (entità, nome, funzionalità come modalità e preset…) con in più il campo **Sensore umidità**. In alternativa puoi usare lo YAML.
+### Pulsante facoltativo
+
+In **alto a sinistra** puoi aggiungere un pulsante con un'icona a scelta che esegue le **azioni standard di Home Assistant**: navigare a un'altra pagina della dashboard, aprire un URL, eseguire un'azione o uno script, aprire le info di un'entità… Si può impostare un'azione per il tocco e una per la pressione prolungata.
+
+```yaml
+button:
+  icon: mdi:calendar-clock      # predefinita: mdi:gesture-tap-button
+  name: Programmi               # suggerimento al passaggio del mouse
+  tap_action:
+    action: navigate
+    navigation_path: /lovelace/riscaldamento
+  hold_action:                  # facoltativa
+    action: more-info
+```
+
+La card ha l'**editor visuale**: è quello della card termostato di Home Assistant (entità, nome, funzionalità come modalità e preset…) con in più il campo **Sensore umidità** e la sezione **Pulsante**. In alternativa puoi usare lo YAML.
 
 Tutte le altre opzioni della card termostato (`name`, `features`, `show_current_as_primary`…) funzionano allo stesso modo.
 

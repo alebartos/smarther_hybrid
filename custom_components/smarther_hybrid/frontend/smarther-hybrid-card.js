@@ -12,11 +12,30 @@
  *     yet, red while something is queued, in flight or refused, grey if
  *     unavailable.
  *
+ * Optionally a button in the top left corner (`button`: icon, name,
+ * tap_action, hold_action) runs standard Home Assistant actions, e.g.
+ * navigate to another dashboard view.
+ *
  * Every other option is passed to the thermostat card unchanged.
  */
 
 const CARD_TYPE = "smarther-hybrid-card";
 const EDITOR_TYPE = "smarther-hybrid-card-editor";
+
+// Options handled here and never passed to the thermostat card.
+const OWN_KEYS = ["humidity_entity", "button"];
+const DEFAULT_BUTTON_ICON = "mdi:gesture-tap-button";
+const HOLD_MS = 500;
+
+const splitConfig = (config) => {
+  const own = {};
+  const inner = {};
+  for (const [key, value] of Object.entries(config)) {
+    if (key === "type") continue;
+    (OWN_KEYS.includes(key) ? own : inner)[key] = value;
+  }
+  return { own, inner: { ...inner, type: "thermostat" } };
+};
 
 const textFor = (hass) => {
   const lang = ((hass && hass.language) || "en").split("-")[0];
@@ -35,6 +54,11 @@ const TEXT = {
     missingEntity: "Specifica un'entità (entity)",
     humidityEntity: "Sensore umidità (facoltativo)",
     humidityHelp: "Se vuoto, usa l'umidità dell'entità termostato.",
+    button: "Pulsante (in alto a sinistra)",
+    icon: "Icona",
+    name: "Nome (suggerimento)",
+    tap_action: "Azione al tocco",
+    hold_action: "Azione alla pressione prolungata",
     humidity: "Umidità",
   },
   en: {
@@ -48,6 +72,11 @@ const TEXT = {
     missingEntity: "Please define an entity",
     humidityEntity: "Humidity sensor (optional)",
     humidityHelp: "When empty, the thermostat entity's humidity is used.",
+    button: "Button (top left)",
+    icon: "Icon",
+    name: "Name (tooltip)",
+    tap_action: "Tap action",
+    hold_action: "Hold action",
     humidity: "Humidity",
   },
 };
@@ -61,6 +90,24 @@ const STYLE = `
   :host { display: block; height: 100%; }
   .wrap { position: relative; height: 100%; }
   .wrap > :first-child { height: 100%; }
+  .action {
+    position: absolute;
+    top: 0;
+    inset-inline-start: 0;
+    width: 48px;
+    height: 48px;
+    padding: 12px;
+    border: none;
+    border-radius: 24px;
+    background: none;
+    color: var(--secondary-text-color);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .action[hidden] { display: none; }
+  .action:hover { background: rgba(var(--rgb-primary-text-color, 0, 0, 0), 0.06); }
+  .action:focus-visible { outline: 2px solid var(--primary-color); }
+  .action ha-icon { --mdc-icon-size: 24px; display: block; }
   .overlay {
     position: absolute;
     left: 16px;
@@ -160,6 +207,7 @@ class SmartherHybridCard extends HTMLElement {
     }
     this._config = config;
     this._render();
+    this._updateButton();
     this._buildCard();
   }
 
@@ -210,6 +258,7 @@ class SmartherHybridCard extends HTMLElement {
       <style>${STYLE}</style>
       <div class="wrap">
         <div class="card"></div>
+        <button class="action" type="button" hidden><ha-icon></ha-icon></button>
         <div class="overlay">
           <span class="humidity" role="img" hidden>
             <svg viewBox="0 0 56 56" aria-hidden="true">
@@ -232,16 +281,71 @@ class SmartherHybridCard extends HTMLElement {
     this._humidityValue = root.querySelector(".humidity .value");
     this._humidityArc = root.querySelector(".humidity .arc");
     this._dot = root.querySelector(".dot");
+    this._button = root.querySelector(".action");
+    this._buttonIcon = root.querySelector(".action ha-icon");
+    this._bindButton();
+  }
+
+  _bindButton() {
+    let timer;
+    let held = false;
+    const clear = () => clearTimeout(timer);
+    this._button.addEventListener("pointerdown", () => {
+      held = false;
+      timer = setTimeout(() => {
+        held = true;
+        this._runAction("hold");
+      }, HOLD_MS);
+    });
+    for (const ev of ["pointerup", "pointerleave", "pointercancel"]) {
+      this._button.addEventListener(ev, clear);
+    }
+    this._button.addEventListener("click", () => {
+      if (held) {
+        held = false;
+        return;
+      }
+      this._runAction("tap");
+    });
+    this._button.addEventListener("contextmenu", (ev) => ev.preventDefault());
+  }
+
+  _runAction(action) {
+    const button = this._config.button;
+    if (!button || (action === "hold" && !button.hold_action)) return;
+    // Handled by Home Assistant like any card action (navigate, url, …).
+    const ev = new Event("hass-action", { bubbles: true, composed: true });
+    ev.detail = {
+      config: {
+        entity: this._config.entity,
+        tap_action: button.tap_action || { action: "more-info" },
+        hold_action: button.hold_action,
+      },
+      action,
+    };
+    this.dispatchEvent(ev);
+  }
+
+  _updateButton() {
+    const button = this._config.button;
+    const show = !!(button && (button.icon || button.tap_action || button.hold_action));
+    this._button.hidden = !show;
+    if (!show) return;
+    this._buttonIcon.setAttribute("icon", button.icon || DEFAULT_BUTTON_ICON);
+    const label = button.name || "";
+    this._button.title = label;
+    if (label) this._button.setAttribute("aria-label", label);
+    else this._button.removeAttribute("aria-label");
   }
 
   async _buildCard() {
-    const { type, humidity_entity, ...inner } = this._config;
+    const { inner } = splitConfig(this._config);
     this._buildId = (this._buildId || 0) + 1;
     const build = this._buildId;
     const helpers = await loadHelpers();
     if (!helpers || build !== this._buildId) return;
 
-    const card = helpers.createCardElement({ ...inner, type: "thermostat" });
+    const card = helpers.createCardElement(inner);
     if (this._hass) card.hass = this._hass;
     this._slot.replaceChildren(card);
     this._card = card;
@@ -316,6 +420,25 @@ class SmartherHybridCard extends HTMLElement {
  * accepts its own options, so it gets the config without ours and its
  * changes are merged back.
  */
+const editorSchema = (text) => [
+  {
+    name: "humidity_entity",
+    selector: { entity: { domain: "sensor", device_class: "humidity" } },
+  },
+  {
+    name: "button",
+    type: "expandable",
+    title: text.button,
+    icon: DEFAULT_BUTTON_ICON,
+    schema: [
+      { name: "icon", selector: { icon: {} } },
+      { name: "name", selector: { text: {} } },
+      { name: "tap_action", selector: { ui_action: {} } },
+      { name: "hold_action", selector: { ui_action: {} } },
+    ],
+  },
+];
+
 class SmartherHybridCardEditor extends HTMLElement {
   setConfig(config) {
     this._config = config;
@@ -326,9 +449,13 @@ class SmartherHybridCardEditor extends HTMLElement {
     this._hass = hass;
     if (this._native) this._native.hass = hass;
     if (this._form) {
+      const text = textFor(hass);
       this._form.hass = hass;
-      this._form.computeLabel = (field) => textFor(hass).humidityEntity;
-      this._form.computeHelper = () => textFor(hass).humidityHelp;
+      this._form.schema = editorSchema(text);
+      this._form.computeLabel = (field) =>
+        field.name === "humidity_entity" ? text.humidityEntity : text[field.name];
+      this._form.computeHelper = (field) =>
+        field.name === "humidity_entity" ? text.humidityHelp : undefined;
     }
   }
 
@@ -346,27 +473,25 @@ class SmartherHybridCardEditor extends HTMLElement {
         .getConfigElement();
       this._native.addEventListener("config-changed", (ev) => {
         ev.stopPropagation();
-        const { humidity_entity } = this._config;
-        this._emit({
-          ...ev.detail.config,
-          type: `custom:${CARD_TYPE}`,
-          ...(humidity_entity ? { humidity_entity } : {}),
-        });
+        const { inner } = splitConfig(ev.detail.config);
+        const { own } = splitConfig(this._config);
+        delete inner.type;
+        this._emit({ type: `custom:${CARD_TYPE}`, ...inner, ...own });
       });
 
       this._form = document.createElement("ha-form");
-      this._form.schema = [
-        {
-          name: "humidity_entity",
-          selector: { entity: { domain: "sensor", device_class: "humidity" } },
-        },
-      ];
+      this._form.schema = editorSchema(textFor(this._hass));
       this._form.addEventListener("value-changed", (ev) => {
         ev.stopPropagation();
         const config = { ...this._config };
-        const value = ev.detail.value.humidity_entity;
-        if (value) config.humidity_entity = value;
+        const { humidity_entity, button } = ev.detail.value;
+        if (humidity_entity) config.humidity_entity = humidity_entity;
         else delete config.humidity_entity;
+        const cleaned = Object.fromEntries(
+          Object.entries(button || {}).filter(([, v]) => v !== "" && v != null)
+        );
+        if (Object.keys(cleaned).length) config.button = cleaned;
+        else delete config.button;
         this._emit(config);
       });
 
@@ -380,9 +505,12 @@ class SmartherHybridCardEditor extends HTMLElement {
 
   _sync() {
     if (!this._native || !this._config) return;
-    const { type, humidity_entity, ...inner } = this._config;
-    this._native.setConfig({ ...inner, type: "thermostat" });
-    this._form.data = { humidity_entity: humidity_entity || "" };
+    const { own, inner } = splitConfig(this._config);
+    this._native.setConfig(inner);
+    this._form.data = {
+      humidity_entity: own.humidity_entity || "",
+      button: own.button || {},
+    };
   }
 
   _emit(config) {
