@@ -1,0 +1,13 @@
+{
+  "domain": "smarther_hybrid",
+  "name": "Smarther Hybrid",
+  "after_dependencies": ["homekit_controller", "netatmo"],
+  "codeowners": ["@alebartos"],
+  "config_flow": true,
+  "documentation": "https://github.com/alebartos/smarther_hybrid",
+  "integration_type": "helper",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/alebartos/smarther_hybrid/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

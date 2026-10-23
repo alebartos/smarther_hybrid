@@ -1,0 +1,39 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Smarther Hybrid",
+        "description": "Unisci l'entità HomeKit (locale, istantanea) e l'entità Netatmo (cloud, preset) dello stesso termostato Smarther.",
+        "data": {
+          "name": "Nome",
+          "homekit_entity": "Entità climate HomeKit",
+          "netatmo_entity": "Entità climate Netatmo",
+          "humidity_entity": "Sensore di umidità (facoltativo)"
+        }
+      }
+    },
+    "error": {
+      "same_entity": "Scegli due entità diverse."
+    },
+    "abort": {
+      "already_configured": "Questa entità HomeKit è già usata da un'altra voce Smarther Hybrid."
+    }
+  },
+  "entity": {
+    "climate": {
+      "smarther": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "schedule": "Programma",
+              "away": "Assenza",
+              "boost": "Boost",
+              "frost_guard": "Antigelo",
+              "manual": "Manuale"
+            }
+          }
+        }
+      }
+    }
+  }
+}

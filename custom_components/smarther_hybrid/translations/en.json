@@ -1,0 +1,39 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Smarther Hybrid",
+        "description": "Combine the HomeKit entity (local, instant) and the Netatmo entity (cloud, presets) of the same Smarther thermostat.",
+        "data": {
+          "name": "Name",
+          "homekit_entity": "HomeKit climate entity",
+          "netatmo_entity": "Netatmo climate entity",
+          "humidity_entity": "Humidity sensor (optional)"
+        }
+      }
+    },
+    "error": {
+      "same_entity": "Pick two different entities."
+    },
+    "abort": {
+      "already_configured": "This HomeKit entity is already used by another Smarther Hybrid entry."
+    }
+  },
+  "entity": {
+    "climate": {
+      "smarther": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "schedule": "Schedule",
+              "away": "Away",
+              "boost": "Boost",
+              "frost_guard": "Frost guard",
+              "manual": "Manual"
+            }
+          }
+        }
+      }
+    }
+  }
+}

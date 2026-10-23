@@ -1,0 +1,5 @@
+# Appunti e dati personali dell'analisi: non pubblicare
+NOTES.md
+homekit_controller-entity-map
+__pycache__/
+.DS_Store
