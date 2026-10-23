@@ -558,6 +558,9 @@ const SCHEDULE_EDITOR_TYPE = "smarther-schedule-card-editor";
 const WEEK_MINUTES = 7 * 24 * 60;
 const DAY_MINUTES = 24 * 60;
 const SCHEDULE_REFRESH_MS = 60 * 1000;
+const SLIDER_STEP = 15;
+// Below this card width the open day is drawn on two rows (00–12, 12–24).
+const SPLIT_DAY_WIDTH = 500;
 const COOL_RGB = [43, 154, 249];
 const WARM_RGB = [255, 129, 0];
 
@@ -591,6 +594,10 @@ const SCHEDULE_TEXT = {
     restoreConfirm: "Ripristinare la versione del programma precedente all'ultimo salvataggio?",
     restoreError: "Ripristino non riuscito",
     badTimes: "Ogni fascia deve iniziare dopo la precedente.",
+    preciseTimes: "Orari precisi",
+    selected: "Fascia selezionata",
+    split: "Dividi",
+    dragHint: "Trascina i confini (passi di 15 minuti) e tocca una fascia per cambiarne la zona.",
   },
   en: {
     title: "Heating schedule",
@@ -621,6 +628,10 @@ const SCHEDULE_TEXT = {
     restoreConfirm: "Restore the version saved before the last change?",
     restoreError: "Could not restore",
     badTimes: "Each slot must start after the previous one.",
+    preciseTimes: "Exact times",
+    selected: "Selected slot",
+    split: "Split",
+    dragHint: "Drag the boundaries (15-minute steps) and tap a slot to change its zone.",
   },
 };
 
@@ -852,6 +863,82 @@ const SCHEDULE_STYLE = `
   }
   .slot select { flex: 1; min-width: 0; }
   .slot input[disabled] { opacity: 0.6; }
+  .dbar {
+    position: relative;
+    height: 48px;
+    margin: 28px 12px 8px;
+    border-radius: 10px;
+    background: var(--secondary-background-color, rgba(127, 127, 127, 0.15));
+    touch-action: none;
+    user-select: none;
+  }
+  .dseg {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    color: #fff;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    white-space: nowrap;
+  }
+  .dseg.first { border-radius: 10px 0 0 10px; }
+  .dseg.last { border-radius: 0 10px 10px 0; }
+  .dseg.first.last { border-radius: 10px; }
+  .dbars { touch-action: none; }
+  .dseg.sel { box-shadow: inset 0 0 0 3px var(--primary-text-color); }
+  .handle {
+    position: absolute;
+    top: -6px;
+    bottom: -6px;
+    width: 32px;
+    margin-left: -16px;
+    display: flex;
+    justify-content: center;
+    cursor: ew-resize;
+    touch-action: none;
+    outline: none;
+    z-index: 1;
+  }
+  .handle::before {
+    content: "";
+    width: 6px;
+    border-radius: 3px;
+    background: var(--card-background-color, #fff);
+    box-shadow: 0 0 0 1px var(--divider-color), 0 1px 3px rgba(0, 0, 0, 0.3);
+  }
+  .handle:focus-visible::before { box-shadow: 0 0 0 2px var(--primary-color); }
+  .handle .tip {
+    position: absolute;
+    bottom: calc(100% + 2px);
+    padding: 1px 6px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--primary-text-color);
+    background: var(--card-background-color, #fff);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    white-space: nowrap;
+  }
+  .handle.dragging .tip { color: var(--primary-color); font-weight: 600; }
+  .daxis {
+    display: flex;
+    justify-content: space-between;
+    margin: 0 12px 12px;
+    font-size: 11px;
+    color: var(--secondary-text-color);
+  }
+  .selbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .selbar .label { width: 100%; font-size: 13px; color: var(--secondary-text-color); }
+  .selbar .spacer { flex: 1; }
+  details.precise { margin-top: 8px; }
+  details.precise summary { cursor: pointer; font-size: 14px; color: var(--primary-color); padding: 4px 0; }
+  details.precise[open] summary { margin-bottom: 8px; }
   .copy { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; font-size: 13px; color: var(--secondary-text-color); }
   .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 16px; }
   .actions .spacer { flex: 1; }
@@ -884,10 +971,24 @@ class SmartherScheduleCard extends HTMLElement {
   connectedCallback() {
     this._timer = setInterval(() => this._load(), SCHEDULE_REFRESH_MS);
     if (this._hass) this._load();
+    if (!this._resize && window.ResizeObserver) {
+      this._resize = new ResizeObserver(() => {
+        const narrow = this.getBoundingClientRect().width < SPLIT_DAY_WIDTH;
+        if (narrow !== this._narrow) {
+          this._narrow = narrow;
+          if (this._draft && this._openDay !== undefined && this._dragging === undefined) this._draw();
+        }
+      });
+      this._resize.observe(this);
+    }
   }
 
   disconnectedCallback() {
     clearInterval(this._timer);
+    if (this._resize) {
+      this._resize.disconnect();
+      this._resize = undefined;
+    }
   }
 
   getCardSize() {
@@ -1166,6 +1267,7 @@ class SmartherScheduleCard extends HTMLElement {
     on("[data-day]", "click", (el) => {
       const day = Number(el.dataset.day);
       this._openDay = this._openDay === day ? undefined : day;
+      this._selSlot = 0;
       this._actionError = undefined;
       this._draw();
     });
@@ -1179,6 +1281,10 @@ class SmartherScheduleCard extends HTMLElement {
       this._removeSlot(this._openDay, Number(el.dataset.slotRemove))
     );
     on('[data-action="add-slot"]', "click", () => this._addSlot(this._openDay));
+    on("[data-sel-zone]", "click", (el) => this._setSelectedZone(el.dataset.selZone));
+    on('[data-action="split"]', "click", () => this._splitSelected());
+    on('[data-action="remove-sel"]', "click", () => this._removeSelected());
+    this._bindSlider();
     on("[data-copy]", "click", (el) =>
       this._copyDay(this._openDay, el.dataset.copy.split(",").map(Number))
     );
@@ -1316,6 +1422,24 @@ class SmartherScheduleCard extends HTMLElement {
   _dayPanel(schedule, t) {
     const day = this._openDay;
     const slots = this._draft.days[day];
+    const colors = this._zoneColors(schedule, this._roomId(schedule));
+    const names = Object.fromEntries(schedule.zones.map((z) => [String(z.id), z.name || z.id]));
+    if (this._selSlot === undefined || this._selSlot >= slots.length) this._selSlot = 0;
+    const sel = slots[this._selSlot];
+    const selEnd = this._selSlot + 1 < slots.length ? slots[this._selSlot + 1].start : DAY_MINUTES;
+
+    this._panelSchedule = schedule;
+
+    const zoneChips = schedule.zones
+      .map(
+        (z) => `
+        <button class="chip ${sameZone(z.id, sel.zone) ? "current" : ""}" type="button" data-sel-zone="${escapeHtml(z.id)}">
+          <span class="swatch" style="background:${colors[String(z.id)]}"></span>${escapeHtml(z.name || z.id)}
+        </button>`
+      )
+      .join("");
+    const canSplit = selEnd - sel.start >= 2 * SLIDER_STEP;
+
     const options = (selected) =>
       schedule.zones
         .map(
@@ -1333,13 +1457,30 @@ class SmartherScheduleCard extends HTMLElement {
         </div>`
       )
       .join("");
+
     return `
       <div class="panel">
         <h3>${escapeHtml(t.dayNames[day])}</h3>
-        ${rows}
-        <button class="btn" type="button" data-action="add-slot">
-          <ha-icon icon="mdi:plus" style="--mdc-icon-size:18px"></ha-icon>${escapeHtml(t.addSlot)}
-        </button>
+        <div class="hint">${escapeHtml(t.dragHint)}</div>
+        <div class="dbars">${this._barsHtml()}</div>
+        <div class="selbar">
+          <span class="label">${escapeHtml(t.selected)}: ${escapeHtml(names[String(sel.zone)] || sel.zone)} ${formatMinutes(sel.start)}–${formatMinutes(selEnd)}</span>
+          ${zoneChips}
+          <span class="spacer"></span>
+          <button class="btn" type="button" data-action="split" ${canSplit ? "" : "disabled"}>
+            <ha-icon icon="mdi:content-cut" style="--mdc-icon-size:18px"></ha-icon>${escapeHtml(t.split)}
+          </button>
+          <button class="btn" type="button" data-action="remove-sel" ${this._selSlot > 0 ? "" : "disabled"}>
+            <ha-icon icon="mdi:delete-outline" style="--mdc-icon-size:18px"></ha-icon>${escapeHtml(t.remove)}
+          </button>
+        </div>
+        <details class="precise" ${this._preciseOpen ? "open" : ""}>
+          <summary>${escapeHtml(t.preciseTimes)}</summary>
+          ${rows}
+          <button class="btn" type="button" data-action="add-slot">
+            <ha-icon icon="mdi:plus" style="--mdc-icon-size:18px"></ha-icon>${escapeHtml(t.addSlot)}
+          </button>
+        </details>
         <div class="copy">
           ${escapeHtml(t.copyTo)}:
           <button class="chip" type="button" data-copy="0,1,2,3,4">${escapeHtml(t.weekdays)}</button>
@@ -1347,6 +1488,203 @@ class SmartherScheduleCard extends HTMLElement {
           <button class="chip" type="button" data-copy="0,1,2,3,4,5,6">${escapeHtml(t.allDays)}</button>
         </div>
       </div>`;
+  }
+
+  // -- slider ------------------------------------------------------------------
+
+  // Rows of the open day's bar: one for the whole day, or two (00–12,
+  // 12–24) when the card is narrow, for twice the precision.
+  _dayRows() {
+    return this._narrow
+      ? [[0, DAY_MINUTES / 2], [DAY_MINUTES / 2, DAY_MINUTES]]
+      : [[0, DAY_MINUTES]];
+  }
+
+  _barsHtml() {
+    const schedule = this._panelSchedule;
+    const slots = this._draft.days[this._openDay];
+    const colors = this._zoneColors(schedule, this._roomId(schedule));
+    const names = Object.fromEntries(schedule.zones.map((z) => [String(z.id), z.name || z.id]));
+    const ends = slots.map((slot, i) => (i + 1 < slots.length ? slots[i + 1].start : DAY_MINUTES));
+
+    return this._dayRows()
+      .map(([rowStart, rowEnd]) => {
+        const span = rowEnd - rowStart;
+        const pct = (m) => ((m - rowStart) / span) * 100;
+        const parts = slots
+          .map((slot, i) => ({ i, slot, start: Math.max(slot.start, rowStart), end: Math.min(ends[i], rowEnd) }))
+          .filter((p) => p.end > p.start);
+        const segs = parts
+          .map((p, k) => {
+            const width = pct(p.end) - pct(p.start);
+            const cls = [
+              "dseg",
+              p.i === this._selSlot ? "sel" : "",
+              k === 0 ? "first" : "",
+              k === parts.length - 1 ? "last" : "",
+            ].join(" ");
+            const label = width > 14 ? escapeHtml(names[String(p.slot.zone)] || p.slot.zone) : "";
+            return `<div class="${cls}" data-seg="${p.i}" style="left:${pct(p.start)}%;width:${width}%;background:${colors[String(p.slot.zone)] || "var(--disabled-color)"}">${label}</div>`;
+          })
+          .join("");
+        // A boundary at 12:00 belongs to the second row.
+        const handles = slots
+          .map((slot, i) => ({ slot, i }))
+          .filter(({ slot, i }) => i > 0 && slot.start >= rowStart && slot.start < rowEnd)
+          .map(({ slot, i }) => {
+            const time = formatMinutes(slot.start);
+            return `
+              <div class="handle ${i === this._dragging ? "dragging" : ""}" data-handle="${i}" tabindex="0" role="slider"
+                aria-valuemin="0" aria-valuemax="${DAY_MINUTES}" aria-valuenow="${slot.start}"
+                aria-valuetext="${time}" style="left:${pct(slot.start)}%">
+                <span class="tip">${time}</span>
+              </div>`;
+          })
+          .join("");
+        const step = span / 4;
+        const axis = [0, 1, 2, 3, 4]
+          .map((k) => `<span>${(rowStart + k * step) / 60}</span>`)
+          .join("");
+        return `
+          <div class="dbar" data-row-start="${rowStart}" data-row-end="${rowEnd}">${segs}${handles}</div>
+          <div class="daxis">${axis}</div>`;
+      })
+      .join("");
+  }
+
+  // Allowed range for boundary `i` of the open day, in minutes.
+  _handleRange(slots, i) {
+    const min = slots[i - 1].start + SLIDER_STEP;
+    const max = (i + 1 < slots.length ? slots[i + 1].start : DAY_MINUTES) - SLIDER_STEP;
+    return [min, max];
+  }
+
+  _moveHandle(i, minutes) {
+    const slots = this._draft.days[this._openDay];
+    const [min, max] = this._handleRange(slots, i);
+    const snapped = Math.round(minutes / SLIDER_STEP) * SLIDER_STEP;
+    slots[i].start = Math.min(max, Math.max(min, snapped));
+  }
+
+  // Minutes under the pointer: the row is the one the finger is over (or the
+  // closest), so a boundary can move from one row to the other in one drag.
+  _minutesAt(container, ev) {
+    let best;
+    let bestDistance = Infinity;
+    for (const bar of container.querySelectorAll(".dbar")) {
+      const rect = bar.getBoundingClientRect();
+      const distance =
+        ev.clientY < rect.top ? rect.top - ev.clientY : ev.clientY > rect.bottom ? ev.clientY - rect.bottom : 0;
+      if (distance < bestDistance) {
+        best = { bar, rect };
+        bestDistance = distance;
+      }
+    }
+    const start = Number(best.bar.dataset.rowStart);
+    const end = Number(best.bar.dataset.rowEnd);
+    const x = Math.min(1, Math.max(0, (ev.clientX - best.rect.left) / best.rect.width));
+    return start + x * (end - start);
+  }
+
+  // The pointer is captured by the bars' container, which survives redrawing
+  // its content: only the bars are redrawn while dragging.
+  _bindSlider() {
+    const container = this.shadowRoot.querySelector(".dbars");
+    if (!container) return;
+    const repaint = () => {
+      container.innerHTML = this._barsHtml();
+    };
+    container.addEventListener("pointerdown", (ev) => {
+      const handle = ev.target.closest(".handle");
+      if (!handle) return;
+      ev.preventDefault();
+      container.setPointerCapture(ev.pointerId);
+      this._dragging = Number(handle.dataset.handle);
+      this._selSlot = this._dragging;
+      repaint();
+    });
+    container.addEventListener("pointermove", (ev) => {
+      if (this._dragging === undefined) return;
+      this._moveHandle(this._dragging, this._minutesAt(container, ev));
+      repaint();
+    });
+    const end = (ev) => {
+      if (this._dragging === undefined) return;
+      if (container.hasPointerCapture(ev.pointerId)) container.releasePointerCapture(ev.pointerId);
+      this._dragging = undefined;
+      this._draw();
+    };
+    container.addEventListener("pointerup", end);
+    container.addEventListener("pointercancel", end);
+    container.addEventListener("click", (ev) => {
+      const seg = ev.target.closest(".dseg");
+      if (!seg) return;
+      this._selSlot = Number(seg.dataset.seg);
+      this._draw();
+    });
+    container.addEventListener("keydown", (ev) => {
+      const handle = ev.target.closest(".handle");
+      const delta = { ArrowLeft: -SLIDER_STEP, ArrowDown: -SLIDER_STEP, ArrowRight: SLIDER_STEP, ArrowUp: SLIDER_STEP }[ev.key];
+      if (!handle || !delta) return;
+      ev.preventDefault();
+      const i = Number(handle.dataset.handle);
+      this._moveHandle(i, this._draft.days[this._openDay][i].start + delta);
+      this._selSlot = i;
+      this._draw();
+      const again = this.shadowRoot.querySelector(`.handle[data-handle="${i}"]`);
+      if (again) again.focus();
+    });
+    const details = this.shadowRoot.querySelector("details.precise");
+    if (details) {
+      details.addEventListener("toggle", () => {
+        this._preciseOpen = details.open;
+      });
+    }
+  }
+
+  // Merge neighbouring slots with the same zone; keep the selection on the
+  // slot that contains `keep` (minutes).
+  _normalizeDay(day, keep) {
+    const merged = [];
+    for (const slot of this._draft.days[day]) {
+      if (!merged.length || !sameZone(merged[merged.length - 1].zone, slot.zone)) merged.push(slot);
+    }
+    this._draft.days[day] = merged;
+    if (keep !== undefined) {
+      let index = 0;
+      merged.forEach((slot, i) => {
+        if (slot.start <= keep) index = i;
+      });
+      this._selSlot = index;
+    }
+  }
+
+  _setSelectedZone(value) {
+    const slots = this._draft.days[this._openDay];
+    const slot = slots[this._selSlot];
+    slot.zone = this._draft.zoneIds.find((id) => String(id) === value) ?? slot.zone;
+    this._normalizeDay(this._openDay, slot.start);
+    this._draw();
+  }
+
+  _splitSelected() {
+    const slots = this._draft.days[this._openDay];
+    const slot = slots[this._selSlot];
+    const end = this._selSlot + 1 < slots.length ? slots[this._selSlot + 1].start : DAY_MINUTES;
+    const mid = Math.round((slot.start + end) / 2 / SLIDER_STEP) * SLIDER_STEP;
+    if (mid <= slot.start || mid >= end) return;
+    const zone = this._draft.zoneIds.find((id) => !sameZone(id, slot.zone)) ?? slot.zone;
+    slots.splice(this._selSlot + 1, 0, { start: mid, zone });
+    this._selSlot += 1;
+    this._draw();
+  }
+
+  _removeSelected() {
+    if (!this._selSlot) return;
+    const keep = this._draft.days[this._openDay][this._selSlot - 1].start;
+    this._draft.days[this._openDay].splice(this._selSlot, 1);
+    this._normalizeDay(this._openDay, keep);
+    this._draw();
   }
 
   _actions(schedule, t) {

@@ -131,7 +131,10 @@ Una seconda card, **Smarther Schedule**, mostra e modifica i **programmi di risc
 - chip per guardare gli altri programmi e pulsante **Attiva questo programma**;
 - **✏️ Modifica**:
   - temperatura di ogni zona con − / + (5–30 °C, passi di 0,5);
-  - tocca un giorno per modificarne le fasce (orario d'inizio, zona, aggiungi / rimuovi) e copiarlo su Lun–Ven, Sab–Dom o tutti i giorni;
+  - tocca un giorno per modificarne le fasce con lo **slider**: trascini i confini (passi di 15 minuti, orario mostrato sopra la maniglia, anche con le frecce della tastiera), tocchi una fascia per cambiarne la zona, **Dividi** / **Rimuovi**;
+  - su schermi stretti (card sotto i 500 px, es. telefono) il giorno è diviso in **due righe, 00–12 e 12–24**, per il doppio della precisione; un confine si può trascinare da una riga all'altra con un solo gesto;
+  - **Orari precisi** (da aprire) per scrivere gli orari a mano e aggiungere fasce;
+  - copia del giorno su Lun–Ven, Sab–Dom o tutti i giorni;
   - **Salva** riscrive il programma su Netatmo **mantenendone il nome**; **Annulla** scarta le modifiche;
   - prima di ogni salvataggio viene conservata una **copia di backup** (le ultime 10 per programma); **Ripristina versione precedente** la rimette.
 
