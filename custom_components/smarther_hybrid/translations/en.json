@@ -26,6 +26,7 @@
           "preset_mode": {
             "state": {
               "schedule": "Schedule",
+              "hold": "Hold",
               "away": "Away",
               "boost": "Boost",
               "frost_guard": "Frost guard",
@@ -41,10 +42,10 @@
       "init": {
         "title": "Options",
         "data": {
-          "hold_refresh_hours": "Re-send hold setpoint every"
+          "hold_refresh_hours": "With Hold, re-send the setpoint every"
         },
         "data_description": {
-          "hold_refresh_hours": "In Heat the setpoint is kept against the schedule. It is re-sent when the thermostat falls back to the schedule and also every this many hours (0 = only on fallback). Keep it below the manual-change duration set in the Netatmo app."
+          "hold_refresh_hours": "With the Hold preset the setpoint is kept against the schedule. It is re-sent when the thermostat falls back to the schedule and also every this many hours (0 = only on fallback). Keep it below the manual-change duration set in the Netatmo app."
         }
       }
     }

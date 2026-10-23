@@ -95,7 +95,7 @@ async def advance(hass, seconds):
 async def test_state_combines_sources(hass, calls):
     await setup(hass)
     state = hass.states.get(ENTITY)
-    assert state.state == HVACMode.AUTO
+    assert state.state == HVACMode.HEAT
     assert state.attributes["current_temperature"] == 21.5
     assert state.attributes["temperature"] == 20.0
     assert state.attributes["current_humidity"] == 68
@@ -103,9 +103,11 @@ async def test_state_combines_sources(hass, calls):
     assert state.attributes["selected_schedule"] == "Inverno"
     assert state.attributes["hold_active"] is False
 
-    set_netatmo(hass, preset="manual", state="heat")
+    # A Netatmo preset never changes the mode, and is shown as is.
+    set_netatmo(hass, preset="away", state="auto")
     await hass.async_block_till_done()
     assert hass.states.get(ENTITY).state == HVACMode.HEAT
+    assert hass.states.get(ENTITY).attributes["preset_mode"] == "away"
 
     set_homekit(hass, state="off", temperature=7.0)
     await hass.async_block_till_done()
@@ -132,19 +134,29 @@ async def test_off_is_explicit_homekit_off(hass, calls):
     calls.assert_awaited_once_with("set_hvac_mode", HK, hvac_mode=HVACMode.OFF)
 
 
-async def test_auto_selects_schedule_on_netatmo(hass, calls):
+async def test_heat_from_off_only_turns_on(hass, calls):
     await setup(hass)
-    await service(hass, "set_hvac_mode", hvac_mode="auto")
-    calls.assert_awaited_once_with("set_preset_mode", NA, preset_mode="schedule")
+    set_homekit(hass, state="off", temperature=7.0)
+    await hass.async_block_till_done()
+    await service(hass, "set_hvac_mode", hvac_mode="heat")
+    calls.assert_awaited_once_with("set_hvac_mode", HK, hvac_mode=HVACMode.HEAT)
 
 
-async def test_auto_needs_netatmo(hass, calls):
+async def test_netatmo_preset_needs_netatmo(hass, calls):
     await setup(hass)
     hass.states.async_set(NA, "unavailable")
     await hass.async_block_till_done()
     with pytest.raises(HomeAssistantError):
-        await service(hass, "set_hvac_mode", hvac_mode="auto")
+        await service(hass, "set_preset_mode", preset_mode="schedule")
     calls.assert_not_awaited()
+
+
+async def test_hold_works_without_netatmo(hass, calls):
+    await setup(hass)
+    hass.states.async_set(NA, "unavailable")
+    await hass.async_block_till_done()
+    await service(hass, "set_preset_mode", preset_mode="hold")
+    assert hass.states.get(ENTITY).attributes["preset_mode"] == "hold"
 
 
 async def test_preset_goes_to_netatmo(hass, calls):
@@ -153,19 +165,20 @@ async def test_preset_goes_to_netatmo(hass, calls):
     calls.assert_awaited_once_with("set_preset_mode", NA, preset_mode="away")
 
 
-async def test_heat_starts_hold_on_current_setpoint(hass, calls):
+async def test_hold_preset_starts_on_current_setpoint(hass, calls):
     await setup(hass)
-    await service(hass, "set_hvac_mode", hvac_mode="heat")
+    await service(hass, "set_preset_mode", preset_mode="hold")
     calls.assert_awaited_once_with("set_temperature", HK, temperature=20.0)
     state = hass.states.get(ENTITY)
     assert state.state == HVACMode.HEAT
+    assert state.attributes["preset_mode"] == "hold"
     assert state.attributes["hold_active"] is True
     assert state.attributes["hold_temperature"] == 20.0
 
 
 async def test_hold_reapplied_when_schedule_takes_over(hass, calls):
     await setup(hass)
-    await service(hass, "set_hvac_mode", hvac_mode="heat")
+    await service(hass, "set_preset_mode", preset_mode="hold")
     calls.reset_mock()
 
     # Manual change expired: the schedule moves the setpoint.
@@ -180,7 +193,7 @@ async def test_hold_reapplied_when_schedule_takes_over(hass, calls):
 
 async def test_hold_adopts_change_made_by_a_person(hass, calls):
     await setup(hass)
-    await service(hass, "set_hvac_mode", hvac_mode="heat")
+    await service(hass, "set_preset_mode", preset_mode="hold")
     calls.reset_mock()
 
     # Changed on the thermostat: Netatmo reports a manual setpoint.
@@ -195,20 +208,20 @@ async def test_hold_adopts_change_made_by_a_person(hass, calls):
 
 async def test_hold_follows_setpoint_set_here(hass, calls):
     await setup(hass)
-    await service(hass, "set_hvac_mode", hvac_mode="heat")
+    await service(hass, "set_preset_mode", preset_mode="hold")
     await service(hass, "set_temperature", temperature=21.0)
     assert hass.states.get(ENTITY).attributes["hold_temperature"] == 21.0
 
 
-async def test_hold_ends_on_off_preset_or_auto(hass, calls):
+async def test_hold_ends_on_off_or_other_preset(hass, calls):
     await setup(hass)
     for command in (
         {"name": "set_hvac_mode", "hvac_mode": "off"},
-        {"name": "set_hvac_mode", "hvac_mode": "auto"},
+        {"name": "set_preset_mode", "preset_mode": "schedule"},
         {"name": "set_preset_mode", "preset_mode": "boost"},
     ):
         set_homekit(hass)
-        await service(hass, "set_hvac_mode", hvac_mode="heat")
+        await service(hass, "set_preset_mode", preset_mode="hold")
         assert hass.states.get(ENTITY).attributes["hold_active"] is True
         name = command.pop("name")
         await service(hass, name, **command)
@@ -217,25 +230,26 @@ async def test_hold_ends_on_off_preset_or_auto(hass, calls):
 
 async def test_hold_ends_when_away_chosen_in_app(hass, calls):
     await setup(hass)
-    await service(hass, "set_hvac_mode", hvac_mode="heat")
+    await service(hass, "set_preset_mode", preset_mode="hold")
     set_netatmo(hass, preset="away", state="auto")
     await hass.async_block_till_done()
     assert hass.states.get(ENTITY).attributes["hold_active"] is False
 
 
-async def test_heat_from_off_never_holds_frost_setpoint(hass, calls):
+async def test_hold_from_off_never_holds_frost_setpoint(hass, calls):
     await setup(hass)
     set_homekit(hass, state="off", temperature=7.0)
     await hass.async_block_till_done()
 
-    await service(hass, "set_hvac_mode", hvac_mode="heat")
+    with pytest.raises(HomeAssistantError):
+        await service(hass, "set_preset_mode", preset_mode="hold")
     assert calls.await_args_list == [call("set_hvac_mode", HK, hvac_mode=HVACMode.HEAT)]
     assert hass.states.get(ENTITY).attributes["hold_active"] is False
 
 
 async def test_periodic_refresh(hass, calls):
     await setup(hass, options={CONF_HOLD_REFRESH_HOURS: 3})
-    await service(hass, "set_hvac_mode", hvac_mode="heat")
+    await service(hass, "set_preset_mode", preset_mode="hold")
     calls.reset_mock()
 
     await advance(hass, 3 * 3600 + 1)

@@ -6,9 +6,9 @@ Integrazione custom per Home Assistant che unisce in **una sola entità climate*
 |---|---|---|
 | Temperatura attuale, sta scaldando sì/no | HomeKit Device (locale) | istantanea |
 | Setpoint (lettura e scrittura) | HomeKit Device (locale) | istantanea, anche senza internet |
-| Riscaldamento (mantieni) / Spento | HomeKit Device (locale) | istantanea, anche senza internet |
-| Auto (segue il programma) | Netatmo (cloud) | dipende dal cloud e dai webhook |
-| Preset: Programma, Assenza, Boost, Antigelo | Netatmo (cloud) | dipende dal cloud e dai webhook |
+| Riscaldamento / Spento | HomeKit Device (locale) | istantanea, anche senza internet |
+| Preset Mantieni | questa integrazione via HomeKit (locale) | istantanea, anche senza internet |
+| Preset Programma, Assenza, Boost, Antigelo | Netatmo (cloud) | dipende dal cloud e dai webhook |
 | Programma selezionato | Netatmo (cloud) | dipende dal cloud e dai webhook |
 | Umidità (facoltativa) | sensore a scelta | come il sensore |
 
@@ -37,19 +37,26 @@ L'integrazione **non parla direttamente con il termostato**: legge e comanda le 
 
 Copia la cartella `custom_components/smarther_hybrid` in `/config/custom_components/` e riavvia Home Assistant.
 
-## Modalità
+## Modalità e preset
 
-| Modalità | Significato | Come funziona |
-|---|---|---|
-| **Auto** | il termostato segue il programma settimanale | sceglie il preset Programma su Netatmo (serve internet) |
-| **Riscaldamento** | tiene la temperatura scelta da te, anche contro il programma | vedi "Mantenimento" sotto (locale) |
-| **Spento** | off vero del termostato = **antigelo (7 °C)** | HomeKit (locale) |
+**Modalità** (HomeKit, locale): **Riscaldamento** (acceso) e **Spento** (off vero = **antigelo 7 °C**). La modalità non cambia in base al preset.
 
-In **Auto**, cambiare la temperatura crea una normale modifica manuale, che scade dopo la durata impostata nell'app e poi il termostato torna al programma.
+**Preset:**
 
-### Mantenimento (Riscaldamento)
+| Preset | Icona | Cosa fa | Serve internet |
+|---|---|---|---|
+| **Programma** | orologio | il termostato segue il programma settimanale | sì (Netatmo) |
+| **Mantieni** | lucchetto | tiene la temperatura attuale contro il programma (vedi sotto) | no |
+| **Assenza** | standard | temperatura di assenza | sì (Netatmo) |
+| **Boost** | standard | riscaldamento al massimo | sì (Netatmo) |
+| **Antigelo** | termometro con fiocco | antigelo | sì (Netatmo) |
+| **Manuale** | dito | mostrato quando c'è una modifica manuale, non selezionabile | — |
 
-Scegliendo **Riscaldamento**, l'integrazione memorizza il setpoint attuale (attributi `hold_active` e `hold_temperature`) e lo difende:
+Senza Mantieni, cambiare la temperatura crea una normale modifica manuale, che scade dopo la durata impostata nell'app e poi il termostato torna al programma.
+
+### Mantieni
+
+Scegliendo il preset **Mantieni**, l'integrazione memorizza il setpoint attuale (attributi `hold_active` e `hold_temperature`) e lo difende:
 
 1. Quando il termostato torna al programma (modifica manuale scaduta), il setpoint viene **rimandato via HomeKit** circa un minuto dopo, il tempo che Netatmo confermi il motivo del cambio.
 2. Come sicurezza viene rimandato anche **ogni 3 ore** (configurabile in *Opzioni*, 0 = disattivato; tienilo sotto la durata delle modifiche manuali dell'app).
@@ -57,20 +64,19 @@ Scegliendo **Riscaldamento**, l'integrazione memorizza il setpoint attuale (attr
 Regole:
 - Se cambi la temperatura **dall'entità**, il nuovo valore diventa quello mantenuto.
 - Se la cambi **dal termostato o dall'app**, l'integrazione **adotta** il nuovo valore invece di sovrascriverlo.
-- Il mantenimento **finisce** scegliendo Auto, Spento o un preset (anche se scelti dall'app), o se il termostato viene spento altrove.
-- Un setpoint da antigelo (7 °C o meno) non viene mai mantenuto.
+- Mantieni **finisce** scegliendo Spento o un altro preset (anche dall'app), o se il termostato viene spento altrove.
+- Non si può attivare su un setpoint da antigelo (7 °C o meno).
 - Sopravvive ai riavvii di Home Assistant.
 
 ## Comportamento
 
 - **Spento = antigelo.** "Spento" manda il vero off al termostato via HomeKit, e lo Smarther lo interpreta come **antigelo (7 °C)**. Attenzione: anche il comando generico `climate.turn_off` (assistenti vocali, automazioni "spegni tutto") porta il termostato in antigelo.
 - **Accendi** (`climate.turn_on`) equivale a scegliere Riscaldamento.
-- **Preset** (Programma, Assenza, Boost, Antigelo) vanno a Netatmo e terminano il mantenimento. **"Manuale"** viene mostrato quando Netatmo segnala una modifica manuale, ma non si può selezionare.
 - **Scelta del programma settimanale:** usa la select creata dall'integrazione Netatmo.
 
 ## Limiti noti
 
-- **Senza internet** funzionano stato, setpoint, Riscaldamento e Spento; Auto e i preset danno errore finché il cloud Netatmo non torna. Il mantenimento non può distinguere un ritorno al programma da un cambio fatto sul termostato, quindi adotta il nuovo valore.
+- **Senza internet** funzionano stato, setpoint, Riscaldamento, Spento e Mantieni; gli altri preset danno errore finché il cloud Netatmo non torna. Mantieni non può distinguere un ritorno al programma da un cambio fatto sul termostato, quindi adotta il nuovo valore.
 - **Senza HomeKit** (termostato non raggiungibile in rete) l'entità risulta non disponibile.
 - Lo stato dei preset arriva dall'integrazione Netatmo: senza webhook può arrivare con alcuni minuti di ritardo.
 - Il comportamento di setpoint e spegnimento fatti via HomeKit rispetto ai programmi Netatmo è stato dedotto e va confermato sul proprio termostato.

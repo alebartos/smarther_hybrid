@@ -15,8 +15,16 @@ PRESET_BOOST = "boost"
 PRESET_FROST_GUARD = "frost_guard"
 # Reported by Netatmo after a manual setpoint change; read-only here.
 PRESET_MANUAL = "manual"
+# Our own preset: keep the setpoint against the schedule (works locally).
+PRESET_HOLD = "hold"
 
-SETTABLE_PRESETS = [PRESET_SCHEDULE, PRESET_AWAY, PRESET_BOOST, PRESET_FROST_GUARD]
+SETTABLE_PRESETS = [
+    PRESET_SCHEDULE,
+    PRESET_HOLD,
+    PRESET_AWAY,
+    PRESET_BOOST,
+    PRESET_FROST_GUARD,
+]
 
 # Attribute name used by the Netatmo climate entity.
 NETATMO_ATTR_SELECTED_SCHEDULE = "selected_schedule"
