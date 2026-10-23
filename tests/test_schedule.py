@@ -85,3 +85,64 @@ async def test_ws_schedules_without_netatmo(hass, hass_ws_client):
     await client.send_json({"id": 1, "type": "smarther_hybrid/schedules"})
     msg = await client.receive_json()
     assert msg["result"] == {"homes": []}
+
+
+async def _client_with_two_schedules(hass, hass_ws_client):
+    assert await async_setup_component(hass, "websocket_api", {})
+    assert await async_setup_component(hass, DOMAIN, {})
+    fake_netatmo(hass)
+    home = hass.data["netatmo"]["entry"]["netatmo_data_handler"].account.homes["h1"]
+    summer = NS(
+        entity_id="s3",
+        name="Estate",
+        type="therm",
+        selected=False,
+        away_temp=16,
+        hg_temp=7,
+        zones=[],
+        timetable=[],
+    )
+    home.schedules["s3"] = summer
+
+    async def switch(schedule_id):
+        for sched in home.schedules.values():
+            sched.selected = sched.entity_id == schedule_id
+        return True
+
+    home.async_switch_schedule = switch
+    return await hass_ws_client(hass), home
+
+
+async def test_ws_switch_schedule(hass, hass_ws_client):
+    client, home = await _client_with_two_schedules(hass, hass_ws_client)
+    await client.send_json(
+        {"id": 1, "type": "smarther_hybrid/switch_schedule", "home_id": "h1", "schedule_id": "s3"}
+    )
+    msg = await client.receive_json()
+    assert msg["success"]
+    selected = [s["name"] for s in msg["result"]["homes"][0]["schedules"] if s["selected"]]
+    assert selected == ["Estate"]
+
+
+async def test_ws_switch_unknown_schedule(hass, hass_ws_client):
+    client, _ = await _client_with_two_schedules(hass, hass_ws_client)
+    await client.send_json(
+        {"id": 1, "type": "smarther_hybrid/switch_schedule", "home_id": "h1", "schedule_id": "nope"}
+    )
+    msg = await client.receive_json()
+    assert not msg["success"]
+    assert msg["error"]["code"] == "not_found"
+
+
+async def test_ws_switch_refused(hass, hass_ws_client):
+    client, home = await _client_with_two_schedules(hass, hass_ws_client)
+
+    async def refuse(schedule_id):
+        return False
+
+    home.async_switch_schedule = refuse
+    await client.send_json(
+        {"id": 1, "type": "smarther_hybrid/switch_schedule", "home_id": "h1", "schedule_id": "s3"}
+    )
+    msg = await client.receive_json()
+    assert msg["error"]["code"] == "switch_failed"

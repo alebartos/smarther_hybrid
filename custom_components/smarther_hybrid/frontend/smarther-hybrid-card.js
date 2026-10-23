@@ -570,6 +570,9 @@ const SCHEDULE_TEXT = {
     error: "Impossibile leggere i programmi",
     noTemp: "—",
     cardTitle: "Titolo",
+    activate: "Attiva questo programma",
+    activating: "Attivazione…",
+    activateError: "Attivazione non riuscita",
   },
   en: {
     title: "Heating schedule",
@@ -579,6 +582,9 @@ const SCHEDULE_TEXT = {
     error: "Could not read the schedules",
     noTemp: "—",
     cardTitle: "Title",
+    activate: "Make this schedule active",
+    activating: "Activating…",
+    activateError: "Could not activate",
   },
 };
 
@@ -715,6 +721,24 @@ const SCHEDULE_STYLE = `
     color: var(--secondary-text-color);
   }
   .message { color: var(--secondary-text-color); padding: 8px 0; }
+  .message.error { color: var(--error-color, #db4437); }
+  .activate {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 36px;
+    padding: 0 16px;
+    margin-bottom: 16px;
+    border: none;
+    border-radius: 18px;
+    background: var(--primary-color);
+    color: var(--text-primary-color, #fff);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .activate[disabled] { opacity: 0.6; cursor: default; }
 `;
 
 class SmartherScheduleCard extends HTMLElement {
@@ -796,7 +820,11 @@ class SmartherScheduleCard extends HTMLElement {
     } else if (!schedule) {
       body = `<div class="message">${escapeHtml(t.empty)}</div>`;
     } else {
-      body = this._chips(schedules, schedule, t) + this._legend(schedule, t) + this._week(schedule, t);
+      body =
+        this._chips(schedules, schedule, t) +
+        this._activate(schedule, t) +
+        this._legend(schedule, t) +
+        this._week(schedule, t);
     }
 
     const title = this._config.title || t.title;
@@ -812,12 +840,47 @@ class SmartherScheduleCard extends HTMLElement {
         ${body}
       </ha-card>`;
     this.shadowRoot.querySelector(".refresh").addEventListener("click", () => this._load());
+    const activate = this.shadowRoot.querySelector(".activate");
+    if (activate) {
+      activate.addEventListener("click", () => this._switch(home.id, schedule.id));
+    }
     this.shadowRoot.querySelectorAll(".chip").forEach((chip) =>
       chip.addEventListener("click", () => {
         this._shown = chip.dataset.id;
         this._draw();
       })
     );
+  }
+
+  _activate(schedule, t) {
+    const error = this._switchError
+      ? `<div class="message error">${escapeHtml(t.activateError)}: ${escapeHtml(this._switchError)}</div>`
+      : "";
+    if (schedule.selected) return error;
+    const busy = this._switching === schedule.id;
+    return `
+      <button class="activate" type="button" ${busy ? "disabled" : ""}>
+        <ha-icon icon="mdi:calendar-check" style="--mdc-icon-size:18px"></ha-icon>
+        ${escapeHtml(busy ? t.activating : t.activate)}
+      </button>${error}`;
+  }
+
+  async _switch(homeId, scheduleId) {
+    this._switching = scheduleId;
+    this._switchError = undefined;
+    this._draw();
+    try {
+      const result = await this._hass.callWS({
+        type: "smarther_hybrid/switch_schedule",
+        home_id: homeId,
+        schedule_id: scheduleId,
+      });
+      this._homes = result.homes || this._homes;
+    } catch (err) {
+      this._switchError = err && err.message ? err.message : String(err);
+    }
+    this._switching = undefined;
+    this._draw();
   }
 
   _chips(schedules, current, t) {

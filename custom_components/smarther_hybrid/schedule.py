@@ -94,7 +94,39 @@ def ws_schedules(
     connection.send_result(msg["id"], {"homes": heating_schedules(hass)})
 
 
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "smarther_hybrid/switch_schedule",
+        vol.Required("home_id"): str,
+        vol.Required("schedule_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_switch_schedule(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Make a schedule the active one (by id: names are not reliable)."""
+    home = next(
+        (h for h in _netatmo_homes(hass) if h.entity_id == msg["home_id"]), None
+    )
+    if home is None or msg["schedule_id"] not in getattr(home, "schedules", {}):
+        connection.send_error(msg["id"], "not_found", "Unknown home or schedule")
+        return
+    try:
+        switched = await home.async_switch_schedule(msg["schedule_id"])
+    except Exception as err:  # noqa: BLE001 - report any Netatmo error
+        connection.send_error(msg["id"], "switch_failed", str(err))
+        return
+    if not switched:
+        connection.send_error(msg["id"], "switch_failed", "Netatmo refused the change")
+        return
+    connection.send_result(msg["id"], {"homes": heating_schedules(hass)})
+
+
 @callback
 def async_register_websocket(hass: HomeAssistant) -> None:
-    """Register the schedule websocket command."""
+    """Register the schedule websocket commands."""
     websocket_api.async_register_command(hass, ws_schedules)
+    websocket_api.async_register_command(hass, ws_switch_schedule)
