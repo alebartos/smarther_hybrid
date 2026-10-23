@@ -463,3 +463,69 @@ async def test_off_is_not_remembered_as_last_preset(hass, calls):
     set_netatmo(hass, preset="off", state="off")
     await hass.async_block_till_done()
     assert hass.states.get(ENTITY).attributes["last_preset"] == "away"
+
+
+async def test_off_stays_off_when_smarther_reports_on_at_7(hass, calls):
+    await setup(hass)
+    await service(hass, "set_hvac_mode", hvac_mode="off")
+    set_homekit(hass, state="off", temperature=7.0)
+    await hass.async_block_till_done()
+    # The Smarther comes back "on" with its frost setpoint: still off.
+    set_homekit(hass, state="heat", temperature=7.0)
+    await hass.async_block_till_done()
+    state = hass.states.get(ENTITY)
+    assert state.state == HVACMode.OFF
+    assert state.attributes["hvac_action"] == "off"
+    assert state.attributes["synced"] is True
+
+
+async def test_off_confirmed_even_if_homekit_never_reports_off(hass, calls):
+    await setup(hass)
+    await service(hass, "set_hvac_mode", hvac_mode="off")
+    set_homekit(hass, state="heat", temperature=7.0)
+    await hass.async_block_till_done()
+    state = hass.states.get(ENTITY)
+    assert state.state == HVACMode.OFF
+    assert state.attributes["synced"] is True
+
+
+async def test_off_ends_when_turned_on_elsewhere(hass, calls):
+    await setup(hass)
+    await service(hass, "set_hvac_mode", hvac_mode="off")
+    set_homekit(hass, state="heat", temperature=7.0)
+    await hass.async_block_till_done()
+    # Someone turns it back on from the app: setpoint above frost.
+    set_homekit(hass, state="heat", temperature=20.0)
+    await hass.async_block_till_done()
+    assert hass.states.get(ENTITY).state == HVACMode.AUTO
+
+
+async def test_netatmo_off_shown_as_off(hass, calls):
+    await setup(hass)
+    set_netatmo(hass, preset="off", state="off")
+    set_homekit(hass, state="heat", temperature=7.0)
+    await hass.async_block_till_done()
+    assert hass.states.get(ENTITY).state == HVACMode.OFF
+
+
+async def test_heat_from_frost_off_goes_back_to_schedule_then_holds(hass, calls):
+    await setup(hass)
+    await service(hass, "set_hvac_mode", hvac_mode="off")
+    set_homekit(hass, state="heat", temperature=7.0)
+    await hass.async_block_till_done()
+    calls.reset_mock()
+
+    async def schedule_brings_setpoint(service_name, entity_id, **data):
+        if service_name == "clear_temperature_setting":
+            set_homekit(hass, state="heat", temperature=20.0)
+
+    calls.side_effect = schedule_brings_setpoint
+    await service(hass, "set_hvac_mode", hvac_mode="heat")
+    assert calls.await_args_list == [
+        call("set_preset_mode", NA, preset_mode="schedule"),
+        call("clear_temperature_setting", NA, domain="netatmo"),
+        call("set_temperature", HK, temperature=20.0),
+    ]
+    state = hass.states.get(ENTITY)
+    assert state.state == HVACMode.HEAT
+    assert state.attributes["hold_temperature"] == 20.0

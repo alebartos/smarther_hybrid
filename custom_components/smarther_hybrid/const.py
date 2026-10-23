@@ -64,5 +64,11 @@ NETATMO_SERVICE_CLEAR_TEMPERATURE_SETTING = "clear_temperature_setting"
 # Setpoints closer than this count as confirmed.
 TEMP_TOLERANCE = 0.05
 
+# Off was chosen here: shown as Off while the thermostat stays in frost
+# protection, even if HomeKit reports it on at 7 °C.
+ATTR_OFF_REQUESTED = "off_requested"
+# Netatmo's raw preset for a thermostat that is off.
+NETATMO_PRESET_OFF = "off"
+
 # Preset re-sent to Netatmo when Auto is chosen.
 ATTR_LAST_PRESET = "last_preset"
