@@ -172,13 +172,16 @@ const STYLE = `
 `;
 
 let helpersPromise;
-const loadHelpers = () => {
-  if (!helpersPromise && window.loadCardHelpers) {
-    helpersPromise = window.loadCardHelpers();
+// The card may start before Home Assistant exposes its helpers: wait for
+// them (up to 10 s) instead of giving up.
+const loadHelpers = async () => {
+  for (let i = 0; i < 100 && !window.loadCardHelpers; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
+  if (!window.loadCardHelpers) return undefined;
+  if (!helpersPromise) helpersPromise = window.loadCardHelpers();
   return helpersPromise;
 };
-loadHelpers();
 
 class SmartherHybridCard extends HTMLElement {
   static getConfigElement() {

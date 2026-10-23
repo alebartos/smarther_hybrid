@@ -72,7 +72,7 @@ Regole:
 
 ## Card per la dashboard
 
-L'integrazione installa anche una card, **Smarther Hybrid**. Non serve aggiungere risorse a mano: compare tra le card dopo il riavvio. È la card termostato di Home Assistant, identica, con in più:
+L'integrazione installa anche una card, **Smarther Hybrid**. Non serve aggiungere risorse a mano: l'integrazione la registra da sola tra le **risorse della dashboard** (Impostazioni → Dashboard → Risorse) e compare tra le card dopo il riavvio. Se gestisci le risorse in YAML, aggiungi tu `/smarther_hybrid/smarther-hybrid-card.js` come `module`. È la card termostato di Home Assistant, identica, con in più:
 
 - **in basso a sinistra**, sopra le modalità: l'**umidità** in un piccolo quadrante come quello del termostato, con la percentuale al centro e una goccia sullo sfondo (colore personalizzabile con la variabile del tema `--smarther-humidity-color`);
 - **in basso a destra**, sopra le modalità: il **pallino di sincronizzazione**

@@ -5,6 +5,7 @@
     "frontend",
     "homekit_controller",
     "http",
+    "lovelace",
     "netatmo"
   ],
   "codeowners": [
@@ -16,5 +17,5 @@
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/alebartos/smarther_hybrid/issues",
   "requirements": [],
-  "version": "0.8.2"
+  "version": "0.8.3"
 }

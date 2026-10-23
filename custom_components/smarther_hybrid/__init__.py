@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -17,6 +19,8 @@ from .sync import SyncState
 PLATFORMS = [Platform.CLIMATE, Platform.BINARY_SENSOR]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+_LOGGER = logging.getLogger(__name__)
 
 CARD_FILE = "smarther-hybrid-card.js"
 CARD_URL = f"/{DOMAIN}/{CARD_FILE}"
@@ -39,7 +43,42 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     )
     # The version busts the browser cache after an update.
     version = (await async_get_integration(hass, DOMAIN)).version
-    add_extra_js_url(hass, f"{CARD_URL}?v={version}")
+    url = f"{CARD_URL}?v={version}"
+    # A dashboard resource is loaded before cards are drawn; an extra JS URL
+    # is not, so a slow load showed "configuration error" until a reload.
+    try:
+        registered = await async_register_card_resource(hass, url)
+    except Exception:  # noqa: BLE001 - never block setup over the card
+        _LOGGER.exception("Could not add the card to the dashboard resources")
+        registered = False
+    if not registered:
+        add_extra_js_url(hass, url)
+    return True
+
+
+def _lovelace_resources(hass: HomeAssistant) -> Any:
+    data = hass.data.get("lovelace")
+    if data is None:
+        return None
+    if isinstance(data, dict):  # before Home Assistant 2025.2
+        return data.get("resources")
+    return getattr(data, "resources", None)
+
+
+async def async_register_card_resource(hass: HomeAssistant, url: str) -> bool:
+    """Add or update the card in the dashboard resources (storage mode only)."""
+    resources = _lovelace_resources(hass)
+    if resources is None or not hasattr(resources, "async_create_item"):
+        return False  # resources managed in YAML
+    await resources.async_get_info()  # loads the stored resources
+    for item in resources.async_items():
+        if item.get("url", "").split("?")[0] == CARD_URL:
+            if item["url"] != url:
+                await resources.async_update_item(
+                    item["id"], {"res_type": "module", "url": url}
+                )
+            return True
+    await resources.async_create_item({"res_type": "module", "url": url})
     return True
 
 
