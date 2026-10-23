@@ -1,0 +1,17 @@
+{
+  "entity": {
+    "climate": {
+      "smarther": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "frost_guard": "mdi:snowflake-thermometer",
+              "manual": "mdi:gesture-tap",
+              "schedule": "mdi:clock-outline"
+            }
+          }
+        }
+      }
+    }
+  }
+}
