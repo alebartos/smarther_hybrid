@@ -303,6 +303,30 @@ async def ws_schedules(
 
 
 @websocket_api.websocket_command(
+    {vol.Required("type"): "smarther_hybrid/refresh_schedules"}
+)
+@websocket_api.async_response
+async def ws_refresh_schedules(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Re-read the homes and schedules from Netatmo, then send them.
+
+    The Netatmo integration refreshes them only every few hours, so a
+    schedule just created in the app would not show up. Called only from
+    the card's refresh button, to stay within Netatmo's rate limits.
+    """
+    try:
+        for account in _netatmo_accounts(hass):
+            await account.async_update_topology()
+    except Exception as err:  # noqa: BLE001 - report it to the card
+        connection.send_error(msg["id"], "refresh_failed", str(err))
+        return
+    connection.send_result(msg["id"], await _result(hass))
+
+
+@websocket_api.websocket_command(
     {
         vol.Required("type"): "smarther_hybrid/save_schedule",
         vol.Required("home_id"): str,
@@ -398,5 +422,6 @@ def async_register_websocket(hass: HomeAssistant) -> None:
     """Register the schedule websocket commands."""
     websocket_api.async_register_command(hass, ws_schedules)
     websocket_api.async_register_command(hass, ws_switch_schedule)
+    websocket_api.async_register_command(hass, ws_refresh_schedules)
     websocket_api.async_register_command(hass, ws_save_schedule)
     websocket_api.async_register_command(hass, ws_restore_schedule)

@@ -144,7 +144,7 @@ title: Programma soggiorno   # facoltativo
 room: Soggiorno              # facoltativo, se il programma ha più stanze
 ```
 
-I dati vengono da quelli che l'integrazione Netatmo ha già in memoria (nessuna chiamata in più al cloud per leggerli) e si aggiornano ogni minuto. Consiglio: prova le prime modifiche su un **programma duplicato** creato dall'app.
+I dati vengono da quelli che l'integrazione Netatmo ha già in memoria (nessuna chiamata in più al cloud per leggerli) e si aggiornano ogni minuto. L'integrazione Netatmo però rilegge l'**elenco** dei programmi solo ogni qualche ora: un programma appena creato nell'app compare premendo **↻** sulla card, che lo chiede a Netatmo. Consiglio: prova le prime modifiche su un **programma duplicato** creato dall'app.
 
 ## Limiti noti
 

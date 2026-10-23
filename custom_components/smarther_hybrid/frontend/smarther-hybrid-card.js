@@ -1013,6 +1013,12 @@ class SmartherScheduleCard extends HTMLElement {
     if (!this._draft) this._draw();
   }
 
+  // Ask Netatmo for the current list (new schedules from the app).
+  async _refresh() {
+    await this._ws({ type: "smarther_hybrid/refresh_schedules" }, "error");
+    this._draw();
+  }
+
   _apply(result) {
     this._homes = result.homes || [];
     this._netatmoFound = result.netatmo_found !== false;
@@ -1236,7 +1242,7 @@ class SmartherScheduleCard extends HTMLElement {
         <div class="header">
           <div class="title">${escapeHtml(title)}</div>
           ${canEdit ? `<button class="icon-btn" data-action="edit" type="button" title="${escapeHtml(t.edit)}" aria-label="${escapeHtml(t.edit)}"><ha-icon icon="mdi:pencil"></ha-icon></button>` : ""}
-          ${editing ? "" : `<button class="icon-btn" data-action="refresh" type="button" aria-label="refresh"><ha-icon icon="mdi:refresh"></ha-icon></button>`}
+          ${editing ? "" : `<button class="icon-btn" data-action="refresh" type="button" aria-label="refresh" ${this._busy === "smarther_hybrid/refresh_schedules" ? "disabled" : ""}><ha-icon icon="mdi:refresh"></ha-icon></button>`}
         </div>
         ${body}
       </ha-card>`;
@@ -1247,7 +1253,7 @@ class SmartherScheduleCard extends HTMLElement {
     const root = this.shadowRoot;
     const on = (selector, event, handler) =>
       root.querySelectorAll(selector).forEach((el) => el.addEventListener(event, () => handler(el)));
-    on('[data-action="refresh"]', "click", () => this._load());
+    on('[data-action="refresh"]', "click", () => this._refresh());
     on('[data-action="edit"]', "click", () => this._startEdit(schedule));
     on('[data-action="cancel"]', "click", () => this._cancelEdit());
     on('[data-action="save"]', "click", () => this._save(home.id, schedule));

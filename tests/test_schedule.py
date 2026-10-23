@@ -289,3 +289,24 @@ async def test_restore_sends_previous_version(hass, hass_ws_client):
     assert params["json"]["zones"][0]["rooms"] == [{"id": "r1", "therm_setpoint_temperature": 21.0}]
     assert params["json"]["timetable"] == [{"m_offset": 0, "zone_id": 1}, {"m_offset": 420, "zone_id": 0}]
     assert msg["result"]["homes"][0]["schedules"][0]["backups"] == 0
+
+
+async def test_refresh_reads_new_schedules(hass, hass_ws_client):
+    assert await async_setup_component(hass, "websocket_api", {})
+    assert await async_setup_component(hass, DOMAIN, {})
+    home = fake_netatmo(hass)
+    account = hass.config_entries.async_entries("netatmo")[0].runtime_data.account
+
+    async def update_topology():
+        home.schedules["s9"] = NS(
+            entity_id="s9", name="Nuovo", type="therm", selected=False,
+            away_temp=16, hg_temp=7, zones=[], timetable=[],
+        )
+
+    account.async_update_topology = update_topology
+    client = await hass_ws_client(hass)
+    await client.send_json({"id": 1, "type": "smarther_hybrid/refresh_schedules"})
+    msg = await client.receive_json()
+    assert msg["success"]
+    names = [s["name"] for s in msg["result"]["homes"][0]["schedules"]]
+    assert names == ["Inverno", "Nuovo"]
