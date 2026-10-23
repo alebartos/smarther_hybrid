@@ -6,18 +6,29 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlow,
+)
 from homeassistant.const import CONF_NAME
+from homeassistant.core import callback
 from homeassistant.helpers.selector import (
     EntitySelector,
     EntitySelectorConfig,
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
     TextSelector,
 )
 
 from .const import (
+    CONF_HOLD_REFRESH_HOURS,
     CONF_HOMEKIT_ENTITY,
     CONF_HUMIDITY_ENTITY,
     CONF_NETATMO_ENTITY,
+    DEFAULT_HOLD_REFRESH_HOURS,
     DEFAULT_NAME,
     DOMAIN,
 )
@@ -27,6 +38,12 @@ class SmartherHybridConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Smarther Hybrid."""
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        """Return the options flow."""
+        return SmartherHybridOptionsFlow()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -65,3 +82,34 @@ class SmartherHybridConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=self.add_suggested_values_to_schema(schema, user_input),
             errors=errors,
         )
+
+
+class SmartherHybridOptionsFlow(OptionsFlow):
+    """Options for Smarther Hybrid."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Set how often the held setpoint is re-sent (0 disables it)."""
+        if user_input is not None:
+            return self.async_create_entry(data=user_input)
+
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_HOLD_REFRESH_HOURS,
+                    default=self.config_entry.options.get(
+                        CONF_HOLD_REFRESH_HOURS, DEFAULT_HOLD_REFRESH_HOURS
+                    ),
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=0,
+                        max=11,
+                        step=0.5,
+                        unit_of_measurement="h",
+                        mode=NumberSelectorMode.BOX,
+                    )
+                ),
+            }
+        )
+        return self.async_show_form(step_id="init", data_schema=schema)

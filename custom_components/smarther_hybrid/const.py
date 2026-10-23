@@ -24,3 +24,18 @@ NETATMO_ATTR_SELECTED_SCHEDULE = "selected_schedule"
 DEFAULT_MIN_TEMP = 5.0
 DEFAULT_MAX_TEMP = 30.0
 TEMP_STEP = 0.5
+
+# Hold ("Riscaldamento" kept against the schedule).
+CONF_HOLD_REFRESH_HOURS = "hold_refresh_hours"
+DEFAULT_HOLD_REFRESH_HOURS = 3.0
+# Wait for Netatmo (webhook) to report why the HomeKit setpoint changed.
+HOLD_SETTLE_SECONDS = 60
+# Never re-send the held setpoint more often than this.
+HOLD_MIN_REAPPLY_SECONDS = 120
+# Time for HomeKit to report the setpoint after turning the thermostat on.
+TURN_ON_SETTLE_SECONDS = 3
+# Setpoints at or below this are frost protection and are never held.
+FROST_GUARD_TEMP = 7.0
+
+ATTR_HOLD_ACTIVE = "hold_active"
+ATTR_HOLD_TEMPERATURE = "hold_temperature"

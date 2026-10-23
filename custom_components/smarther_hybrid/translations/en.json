@@ -35,5 +35,18 @@
         }
       }
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options",
+        "data": {
+          "hold_refresh_hours": "Re-send hold setpoint every"
+        },
+        "data_description": {
+          "hold_refresh_hours": "In Heat the setpoint is kept against the schedule. It is re-sent when the thermostat falls back to the schedule and also every this many hours (0 = only on fallback). Keep it below the manual-change duration set in the Netatmo app."
+        }
+      }
+    }
   }
 }

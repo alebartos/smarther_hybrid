@@ -35,5 +35,18 @@
         }
       }
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opzioni",
+        "data": {
+          "hold_refresh_hours": "Rimanda il setpoint mantenuto ogni"
+        },
+        "data_description": {
+          "hold_refresh_hours": "In Riscaldamento il setpoint viene mantenuto contro il programma. Viene rimandato quando il termostato torna al programma e anche ogni tot ore (0 = solo al ritorno al programma). Tienilo sotto la durata delle modifiche manuali impostata nell'app Netatmo."
+        }
+      }
+    }
   }
 }
