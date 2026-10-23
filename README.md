@@ -83,10 +83,13 @@ L'integrazione installa anche una card, **Smarther Hybrid**. Non serve aggiunger
   - 🔴 rosso (lampeggia): comando in coda, in viaggio o rifiutato (passandoci sopra si vede quale),
   - ⚪ grigio: termostato non disponibile.
 
+  Il pallino compare solo con le entità Smarther Hybrid: usando la card con un altro termostato si nasconde da solo. Si può anche nascondere sempre con `show_sync: false` (o dall'editor visuale).
+
 ```yaml
 type: custom:smarther-hybrid-card
 entity: climate.smarther_soggiorno
 humidity_entity: sensor.umidita_soggiorno   # facoltativo: senza, usa l'umidità dell'entità
+show_sync: true                             # facoltativo: false per nascondere il pallino
 features:
   - type: climate-hvac-modes
     hvac_modes: [auto, heat, "off"]

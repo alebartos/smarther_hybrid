@@ -23,7 +23,7 @@ const CARD_TYPE = "smarther-hybrid-card";
 const EDITOR_TYPE = "smarther-hybrid-card-editor";
 
 // Options handled here and never passed to the thermostat card.
-const OWN_KEYS = ["humidity_entity", "button"];
+const OWN_KEYS = ["humidity_entity", "button", "show_sync"];
 const DEFAULT_BUTTON_ICON = "mdi:gesture-tap-button";
 const HOLD_MS = 500;
 
@@ -54,6 +54,8 @@ const TEXT = {
     missingEntity: "Specifica un'entità (entity)",
     humidityEntity: "Sensore umidità (facoltativo)",
     humidityHelp: "Se vuoto, usa l'umidità dell'entità termostato.",
+    show_sync: "Mostra pallino di sincronizzazione",
+    showSyncHelp: "Solo per le entità Smarther Hybrid; con altri termostati non compare.",
     button: "Pulsante (in alto a sinistra)",
     icon: "Icona",
     name: "Nome (suggerimento)",
@@ -72,6 +74,8 @@ const TEXT = {
     missingEntity: "Please define an entity",
     humidityEntity: "Humidity sensor (optional)",
     humidityHelp: "When empty, the thermostat entity's humidity is used.",
+    show_sync: "Show sync dot",
+    showSyncHelp: "Only for Smarther Hybrid entities; hidden for other thermostats.",
     button: "Button (top left)",
     icon: "Icon",
     name: "Name (tooltip)",
@@ -161,6 +165,7 @@ const STYLE = `
     pointer-events: auto;
     background: var(--disabled-color, #bdbdbd);
   }
+  .dot[hidden] { display: none; }
   .dot.synced { background: var(--success-color, #43a047); }
   .dot.accepted { background: var(--warning-color, #ffa600); }
   .dot.pending {
@@ -400,7 +405,9 @@ class SmartherHybridCard extends HTMLElement {
       this._humidity.setAttribute("aria-label", `${this._t("humidity")} ${label}`);
     }
 
-    // Sync dot.
+    // Sync dot: only for Smarther Hybrid entities, unless turned off.
+    const hasSync = !!(stateObj && "synced" in stateObj.attributes);
+    this._dot.hidden = this._config.show_sync === false || (stateObj && !hasSync);
     let cls = "";
     let title = this._t("unavailable");
     if (stateObj && stateObj.state !== "unavailable" && "synced" in stateObj.attributes) {
@@ -432,6 +439,7 @@ const editorSchema = (text) => [
     name: "humidity_entity",
     selector: { entity: { domain: "sensor", device_class: "humidity" } },
   },
+  { name: "show_sync", selector: { boolean: {} } },
   {
     name: "button",
     type: "expandable",
@@ -462,7 +470,7 @@ class SmartherHybridCardEditor extends HTMLElement {
       this._form.computeLabel = (field) =>
         field.name === "humidity_entity" ? text.humidityEntity : text[field.name];
       this._form.computeHelper = (field) =>
-        field.name === "humidity_entity" ? text.humidityHelp : undefined;
+        ({ humidity_entity: text.humidityHelp, show_sync: text.showSyncHelp })[field.name];
     }
   }
 
@@ -491,9 +499,12 @@ class SmartherHybridCardEditor extends HTMLElement {
       this._form.addEventListener("value-changed", (ev) => {
         ev.stopPropagation();
         const config = { ...this._config };
-        const { humidity_entity, button } = ev.detail.value;
+        const { humidity_entity, button, show_sync } = ev.detail.value;
         if (humidity_entity) config.humidity_entity = humidity_entity;
         else delete config.humidity_entity;
+        // Shown by default: only store it when turned off.
+        if (show_sync === false) config.show_sync = false;
+        else delete config.show_sync;
         const cleaned = Object.fromEntries(
           Object.entries(button || {}).filter(([, v]) => v !== "" && v != null)
         );
@@ -516,6 +527,7 @@ class SmartherHybridCardEditor extends HTMLElement {
     this._native.setConfig(inner);
     this._form.data = {
       humidity_entity: own.humidity_entity || "",
+      show_sync: own.show_sync !== false,
       button: own.button || {},
     };
   }
