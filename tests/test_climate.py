@@ -426,3 +426,40 @@ async def test_chosen_preset_shown_until_netatmo_confirms(hass, calls):
     state = hass.states.get(ENTITY)
     assert state.attributes["preset_mode"] == "schedule"
     assert state.attributes["sync_state"] == "synced"
+
+
+async def test_frost_guard_confirmed_by_homekit(hass, calls):
+    await setup(hass)
+    await service(hass, "set_preset_mode", preset_mode="frost_guard")
+    assert hass.states.get(ENTITY).attributes["sync_state"] == "accepted"
+
+    # Netatmo hasn't reported anything yet, but the thermostat drops to 7 °C.
+    set_homekit(hass, temperature=7.0)
+    await hass.async_block_till_done()
+    state = hass.states.get(ENTITY)
+    assert state.attributes["sync_state"] == "synced"
+    # Netatmo still says schedule: keep showing what the thermostat confirmed.
+    assert state.attributes["preset_mode"] == "frost_guard"
+
+    # Once Netatmo moves on, follow it again.
+    set_netatmo(hass, preset="away")
+    await hass.async_block_till_done()
+    assert hass.states.get(ENTITY).attributes["preset_mode"] == "away"
+
+
+async def test_netatmo_off_shown_and_confirmed_as_frost_guard(hass, calls):
+    await setup(hass)
+    await service(hass, "set_preset_mode", preset_mode="frost_guard")
+    set_netatmo(hass, preset="off", state="off")
+    await hass.async_block_till_done()
+    state = hass.states.get(ENTITY)
+    assert state.attributes["sync_state"] == "synced"
+    assert state.attributes["preset_mode"] == "frost_guard"
+
+
+async def test_off_is_not_remembered_as_last_preset(hass, calls):
+    await setup(hass)
+    await service(hass, "set_preset_mode", preset_mode="away")
+    set_netatmo(hass, preset="off", state="off")
+    await hass.async_block_till_done()
+    assert hass.states.get(ENTITY).attributes["last_preset"] == "away"

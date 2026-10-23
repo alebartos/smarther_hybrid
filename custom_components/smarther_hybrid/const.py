@@ -19,6 +19,14 @@ PRESET_MANUAL = "manual"
 SETTABLE_PRESETS = [PRESET_SCHEDULE, PRESET_AWAY, PRESET_BOOST, PRESET_FROST_GUARD]
 # Netatmo reports "home" for a room following the schedule.
 NETATMO_PRESET_HOME = "home"
+# Other names Netatmo may report, shown (and confirmed) as our presets. On
+# the Smarther "off" is frost protection. Not used to remember the last preset.
+NETATMO_PRESET_ALIASES = {
+    NETATMO_PRESET_HOME: PRESET_SCHEDULE,
+    "hg": PRESET_FROST_GUARD,
+    "off": PRESET_FROST_GUARD,
+    "max": PRESET_BOOST,
+}
 
 # Attribute name used by the Netatmo climate entity.
 NETATMO_ATTR_SELECTED_SCHEDULE = "selected_schedule"

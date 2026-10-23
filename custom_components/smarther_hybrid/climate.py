@@ -82,6 +82,7 @@ from .const import (
     NETATMO_ATTR_SELECTED_SCHEDULE,
     NETATMO_COMMAND_INTERVAL,
     NETATMO_DOMAIN,
+    NETATMO_PRESET_ALIASES,
     NETATMO_PRESET_HOME,
     NETATMO_SERVICE_CLEAR_TEMPERATURE_SETTING,
     PRESET_AWAY,
@@ -156,6 +157,9 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
         self._netatmo_last_sent: datetime | None = None
         self._netatmo_pending: str | None = None
         self._unsub_netatmo: CALLBACK_TYPE | None = None
+        # Preset confirmed by HomeKit before Netatmo caught up: shown while
+        # Netatmo still reports the stale value.
+        self._confirmed_preset: tuple[str, str | None] | None = None
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -210,15 +214,27 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
     def _netatmo(self) -> State | None:
         return self.hass.states.get(self._netatmo_id)
 
+    def _frost_on_homekit(self) -> bool:
+        """HomeKit shows frost protection: off, or a frost-level setpoint."""
+        if not _usable(self._homekit):
+            return False
+        target = self.target_temperature
+        return not self._homekit_on() or (
+            target is not None and target <= FROST_GUARD_TEMP
+        )
+
     def _homekit_on(self) -> bool:
         state = self._homekit
         return _usable(state) and state.state != HVACMode.OFF
 
-    def _netatmo_preset(self) -> str | None:
+    def _netatmo_preset(self, aliases: bool = True) -> str | None:
+        """Netatmo's preset; with `aliases`, other names mapped to ours."""
         state = self._netatmo
         if not _usable(state):
             return None
         preset = state.attributes.get(ATTR_PRESET_MODE)
+        if aliases:
+            return NETATMO_PRESET_ALIASES.get(preset, preset)
         return PRESET_SCHEDULE if preset == NETATMO_PRESET_HOME else preset
 
     # -- state ---------------------------------------------------------------
@@ -248,9 +264,14 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
             if (pending["hvac"] == HVACMode.OFF) != self._homekit_on():
                 self._sync.forget("hvac")
         # Only once the cloud accepted it: before that the old preset may match.
+        accepted = self._sync.accepted.get("preset")
         preset = self._netatmo_preset()
-        if preset is not None and self._sync.accepted.get("preset") == preset:
+        if preset is not None and accepted == preset:
             self._sync.forget("preset")
+        elif accepted == PRESET_FROST_GUARD and self._frost_on_homekit():
+            # The thermostat itself confirms frost protection, locally.
+            self._sync.forget("preset")
+            self._confirmed_preset = (PRESET_FROST_GUARD, preset)
         self._sync.available = self.available
         self._sync.notify()
 
@@ -277,6 +298,7 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
 
     async def _netatmo_apply(self, preset_mode: str) -> None:
         """Send a preset to Netatmo; accepted once the cloud call succeeds."""
+        self._confirmed_preset = None
         self._sync.forget("preset")
         self._sync.pending["preset"] = preset_mode
         try:
@@ -362,7 +384,12 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
         for waiting in (self._sync.pending, self._sync.accepted):
             if "preset" in waiting:
                 return waiting["preset"]
-        return self._netatmo_preset()
+        preset = self._netatmo_preset()
+        if self._confirmed_preset is not None:
+            confirmed, stale = self._confirmed_preset
+            if preset == stale:
+                return confirmed
+        return preset
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -461,7 +488,8 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
 
     @callback
     def _netatmo_changed(self, event: Event[EventStateChangedData]) -> None:
-        preset = self._netatmo_preset()
+        # Raw value: "off" must not be remembered as frost guard for Auto.
+        preset = self._netatmo_preset(aliases=False)
         # Remember presets chosen in the app too, but not the schedule
         # fallback that a hold is fighting.
         if preset in SETTABLE_PRESETS and not (
