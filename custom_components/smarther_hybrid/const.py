@@ -45,7 +45,12 @@ NETATMO_COMMAND_INTERVAL = 3.0
 
 # Sync status of the commands sent.
 ATTR_SYNCED = "synced"
+ATTR_SYNC_STATE = "sync_state"
 ATTR_PENDING = "pending"
+
+NETATMO_DOMAIN = "netatmo"
+# Netatmo entity service: cancel the room's manual change (back to schedule).
+NETATMO_SERVICE_CLEAR_TEMPERATURE_SETTING = "clear_temperature_setting"
 # Setpoints closer than this count as confirmed.
 TEMP_TOLERANCE = 0.05
 

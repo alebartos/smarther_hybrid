@@ -9,7 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import ATTR_PENDING
+from .const import ATTR_PENDING, ATTR_SYNC_STATE
 from .sync import SyncState
 
 
@@ -54,4 +54,7 @@ class SmartherSyncedSensor(BinarySensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """List what is still waiting."""
-        return {ATTR_PENDING: sorted(self._sync.pending)}
+        return {
+            ATTR_SYNC_STATE: self._sync.state,
+            ATTR_PENDING: self._sync.waiting,
+        }

@@ -66,6 +66,7 @@ Regole:
 - **Spento = antigelo.** "Spento" manda il vero off al termostato via HomeKit, e lo Smarther lo interpreta come **antigelo (7 °C)**. Attenzione: anche il comando generico `climate.turn_off` (assistenti vocali, automazioni "spegni tutto") porta il termostato in antigelo.
 - **Accendi** (`climate.turn_on`) equivale a scegliere Riscaldamento.
 - **Preset** (Programma, Assenza, Boost, Antigelo) vanno a Netatmo e terminano il mantenimento. **"Manuale"** viene mostrato quando Netatmo segnala una modifica manuale, ma non si può selezionare.
+- **Programma riporta davvero la stanza al programma.** Il preset Netatmo cambia solo la modalità della casa; una modifica manuale della stanza (es. fatta via HomeKit o in Riscaldamento) resterebbe attiva. Per questo Programma, scelto direttamente o tramite Auto, manda anche `netatmo.clear_temperature_setting`.
 - **Scelta del programma settimanale:** usa la select creata dall'integrazione Netatmo.
 - **Comandi a Netatmo distanziati di 3 secondi.** Netatmo è lento: il primo comando parte subito, quelli che arrivano entro 3 secondi aspettano, e della coda parte solo l'ultimo (es. Assenza → Boost → Programma in fretta: a Netatmo arriva Assenza e poi Programma). Scegliere Spento o Riscaldamento annulla i comandi Netatmo in coda. I comandi HomeKit partono sempre subito.
 
@@ -76,7 +77,8 @@ L'integrazione installa anche una card, **Smarther Hybrid**. Non serve aggiunger
 - **in basso a sinistra**, sopra le modalità: l'**umidità** in un piccolo quadrante come quello del termostato, con la percentuale al centro e una goccia sullo sfondo (colore personalizzabile con la variabile del tema `--smarther-humidity-color`);
 - **in basso a destra**, sopra le modalità: il **pallino di sincronizzazione**
   - 🟢 verde: tutti i comandi inviati sono stati confermati,
-  - 🔴 rosso (lampeggia): almeno un comando non è ancora confermato (passandoci sopra si vede quale),
+  - 🟠 arancione: Netatmo ha accettato il comando, ma non ha ancora riportato il nuovo stato (può volerci qualche minuto),
+  - 🔴 rosso (lampeggia): comando in coda, in viaggio o rifiutato (passandoci sopra si vede quale),
   - ⚪ grigio: termostato non disponibile.
 
 ```yaml
@@ -99,9 +101,9 @@ Un comando è "confermato" quando la sorgente riporta il valore inviato:
 | Comando | Confermato quando |
 |---|---|
 | Setpoint, Riscaldamento/Spento, rinvio del mantenimento | **HomeKit** riporta quel valore (risposta del termostato, in locale) |
-| Preset e Auto (anche in coda) | **Netatmo** riporta quel preset (cioè il cloud lo ha accettato) |
+| Preset e Auto | accettato quando il **cloud Netatmo** risponde OK (🟠), confermato quando **Netatmo** riporta quel preset (🟢) |
 
-Un comando superato da un altro (es. un preset in coda annullato da Spento) non conta più. L'entità espone `synced` e `pending`; c'è anche il sensore binario **"… sincronizzato"**, utile per le automazioni (es. avviso se resta spento per più di 10 minuti).
+Un comando rifiutato resta rosso finché non ne mandi un altro dello stesso tipo. Un comando superato da un altro (es. un preset in coda annullato da Spento) non conta più. L'entità espone `synced`, `sync_state` (`synced`/`accepted`/`pending`) e `pending`; c'è anche il sensore binario **"… sincronizzato"**, utile per le automazioni (es. avviso se resta spento per più di 10 minuti).
 
 ## Limiti noti
 

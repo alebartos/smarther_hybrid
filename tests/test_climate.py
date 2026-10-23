@@ -139,7 +139,11 @@ async def test_off_is_explicit_homekit_off(hass, calls):
 async def test_auto_selects_schedule_on_netatmo(hass, calls):
     await setup(hass)
     await service(hass, "set_hvac_mode", hvac_mode="auto")
-    calls.assert_awaited_once_with("set_preset_mode", NA, preset_mode="schedule")
+    # Home mode to schedule, then cancel the room's manual change.
+    assert calls.await_args_list == [
+        call("set_preset_mode", NA, preset_mode="schedule"),
+        call("clear_temperature_setting", NA, domain="netatmo"),
+    ]
 
 
 async def test_auto_needs_netatmo(hass, calls):
@@ -304,6 +308,7 @@ async def test_netatmo_commands_spaced_latest_wins(hass, calls):
         assert calls.await_args_list == [
             call("set_preset_mode", NA, preset_mode="away"),
             call("set_preset_mode", NA, preset_mode="schedule"),
+            call("clear_temperature_setting", NA, domain="netatmo"),
         ]
 
 
@@ -343,7 +348,10 @@ async def test_setpoint_pending_until_homekit_confirms(hass, calls):
 async def test_preset_pending_until_netatmo_confirms(hass, calls):
     await setup(hass)
     await service(hass, "set_preset_mode", preset_mode="away")
-    assert hass.states.get(ENTITY).attributes["pending"] == ["preset"]
+    state = hass.states.get(ENTITY)
+    # Accepted by the cloud (orange) until Netatmo reports it.
+    assert state.attributes["pending"] == ["preset"]
+    assert state.attributes["sync_state"] == "accepted"
     set_netatmo(hass, preset="away")
     await hass.async_block_till_done()
     assert hass.states.get(ENTITY).attributes["synced"] is True
@@ -358,12 +366,22 @@ async def test_off_pending_until_homekit_off(hass, calls):
     assert hass.states.get(ENTITY).attributes["synced"] is True
 
 
-async def test_failed_command_is_not_pending(hass, calls):
+async def test_refused_command_stays_pending(hass, calls):
     await setup(hass)
     calls.side_effect = HomeAssistantError("boom")
     with pytest.raises(HomeAssistantError):
         await service(hass, "set_temperature", temperature=23)
-    assert hass.states.get(ENTITY).attributes["synced"] is True
+    state = hass.states.get(ENTITY)
+    assert state.attributes["synced"] is False
+    assert state.attributes["sync_state"] == "pending"
+
+
+async def test_refused_netatmo_preset_stays_pending(hass, calls):
+    await setup(hass)
+    calls.side_effect = HomeAssistantError("boom")
+    with pytest.raises(HomeAssistantError):
+        await service(hass, "set_preset_mode", preset_mode="away")
+    assert hass.states.get(ENTITY).attributes["sync_state"] == "pending"
 
 
 async def test_queued_preset_is_pending_and_dropped_by_off(hass, calls):
@@ -384,3 +402,10 @@ async def test_synced_sensor_unavailable_without_homekit(hass, calls):
     hass.states.async_set(HK, "unavailable")
     await hass.async_block_till_done()
     assert hass.states.get(SYNCED).state == "unavailable"
+
+
+
+async def test_reselecting_current_preset_is_synced_once_accepted(hass, calls):
+    await setup(hass)  # Netatmo already reports schedule
+    await service(hass, "set_preset_mode", preset_mode="schedule")
+    assert hass.states.get(ENTITY).attributes["sync_state"] == "synced"

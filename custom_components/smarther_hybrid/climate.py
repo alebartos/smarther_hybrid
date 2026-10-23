@@ -67,6 +67,7 @@ from .const import (
     ATTR_HOLD_TEMPERATURE,
     ATTR_LAST_PRESET,
     ATTR_PENDING,
+    ATTR_SYNC_STATE,
     ATTR_SYNCED,
     CONF_HOLD_REFRESH_HOURS,
     CONF_HOMEKIT_ENTITY,
@@ -80,6 +81,8 @@ from .const import (
     HOLD_SETTLE_SECONDS,
     NETATMO_ATTR_SELECTED_SCHEDULE,
     NETATMO_COMMAND_INTERVAL,
+    NETATMO_DOMAIN,
+    NETATMO_SERVICE_CLEAR_TEMPERATURE_SETTING,
     PRESET_AWAY,
     PRESET_BOOST,
     PRESET_FROST_GUARD,
@@ -236,12 +239,14 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
         if "temperature" in pending:
             target = self.target_temperature
             if target is not None and abs(target - pending["temperature"]) < TEMP_TOLERANCE:
-                del pending["temperature"]
+                self._sync.forget("temperature")
         if "hvac" in pending and _usable(self._homekit):
             if (pending["hvac"] == HVACMode.OFF) != self._homekit_on():
-                del pending["hvac"]
-        if "preset" in pending and self._netatmo_preset() == pending["preset"]:
-            del pending["preset"]
+                self._sync.forget("hvac")
+        # Only once the cloud accepted it: before that the old preset may match.
+        preset = self._netatmo_preset()
+        if preset is not None and self._sync.accepted.get("preset") == preset:
+            self._sync.forget("preset")
         self._sync.available = self.available
         self._sync.notify()
 
@@ -254,15 +259,39 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
         return "preset", data["preset_mode"]
 
     async def _command(self, service: str, entity_id: str, **data: Any) -> None:
-        """Send a command and wait for a source to confirm it."""
+        """Send a HomeKit command and wait for HomeKit to report the value.
+
+        A refused command stays pending (red) until a new one replaces it.
+        """
         key, expected = self._expectation(service, data)
+        self._sync.forget(key)
         self._sync.pending[key] = expected
         try:
             await self._call(service, entity_id, **data)
+        finally:
+            self.async_write_ha_state()
+
+    async def _netatmo_apply(self, preset_mode: str) -> None:
+        """Send a preset to Netatmo; accepted once the cloud call succeeds."""
+        self._sync.forget("preset")
+        self._sync.pending["preset"] = preset_mode
+        try:
+            await self._call(
+                SERVICE_SET_PRESET_MODE, self._netatmo_id, preset_mode=preset_mode
+            )
+            if preset_mode == PRESET_SCHEDULE:
+                # The preset only sets the home mode: a manual change on the
+                # room (e.g. from HomeKit) survives it. Cancel that as well.
+                await self._call(
+                    NETATMO_SERVICE_CLEAR_TEMPERATURE_SETTING,
+                    self._netatmo_id,
+                    domain=NETATMO_DOMAIN,
+                )
         except Exception:
-            self._sync.pending.pop(key, None)
             self.async_write_ha_state()
             raise
+        self._sync.pending.pop("preset", None)
+        self._sync.accepted["preset"] = preset_mode
         self.async_write_ha_state()
 
     @property
@@ -337,7 +366,8 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
             ATTR_HOLD_TEMPERATURE: self._hold_temperature,
             ATTR_LAST_PRESET: self._last_preset,
             ATTR_SYNCED: self._sync.synced,
-            ATTR_PENDING: sorted(self._sync.pending),
+            ATTR_SYNC_STATE: self._sync.state,
+            ATTR_PENDING: self._sync.waiting,
             NETATMO_ATTR_SELECTED_SCHEDULE: (
                 netatmo.attributes.get(NETATMO_ATTR_SELECTED_SCHEDULE)
                 if _usable(netatmo)
@@ -450,7 +480,7 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
             self._unsub_netatmo = None
         self._netatmo_pending = None
         # Superseded: an unconfirmed preset no longer matters.
-        self._sync.pending.pop("preset", None)
+        self._sync.forget("preset")
 
     async def _send_netatmo_preset(self, preset_mode: str) -> None:
         """Send now, or queue it if the previous command went out too recently.
@@ -466,11 +496,10 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
         )
         if wait <= 0 and self._unsub_netatmo is None:
             self._netatmo_last_sent = now
-            await self._command(
-                SERVICE_SET_PRESET_MODE, self._netatmo_id, preset_mode=preset_mode
-            )
+            await self._netatmo_apply(preset_mode)
             return
         self._netatmo_pending = preset_mode
+        self._sync.forget("preset")
         self._sync.pending["preset"] = preset_mode
         if self._unsub_netatmo is None:
             self._unsub_netatmo = async_call_later(
@@ -484,17 +513,17 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
             return
         self._netatmo_last_sent = dt_util.utcnow()
         try:
-            await self._command(
-                SERVICE_SET_PRESET_MODE, self._netatmo_id, preset_mode=preset_mode
-            )
+            await self._netatmo_apply(preset_mode)
         except HomeAssistantError as err:
             _LOGGER.error("Queued Netatmo preset %s failed: %s", preset_mode, err)
 
     # -- commands ------------------------------------------------------------
 
-    async def _call(self, service: str, entity_id: str, **data: Any) -> None:
+    async def _call(
+        self, service: str, entity_id: str, domain: str = CLIMATE_DOMAIN, **data: Any
+    ) -> None:
         await self.hass.services.async_call(
-            CLIMATE_DOMAIN,
+            domain,
             service,
             {ATTR_ENTITY_ID: entity_id, **data},
             blocking=True,

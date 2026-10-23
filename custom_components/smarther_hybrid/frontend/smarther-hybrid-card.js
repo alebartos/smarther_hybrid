@@ -7,8 +7,10 @@
  *   - bottom left: humidity as a small dial like the thermostat's, with the
  *     percentage inside over a water drop (from `humidity_entity`, or the
  *     entity's current_humidity);
- *   - bottom right: a sync dot, green when the thermostat has confirmed
- *     every command, red while something is pending, grey if unavailable.
+ *   - bottom right: a sync dot, green when every command is confirmed,
+ *     orange when Netatmo accepted a command but has not reported it back
+ *     yet, red while something is queued, in flight or refused, grey if
+ *     unavailable.
  *
  * Every other option is passed to the thermostat card unchanged.
  */
@@ -18,7 +20,8 @@ const CARD_TYPE = "smarther-hybrid-card";
 const TEXT = {
   it: {
     synced: "Sincronizzato: tutti i comandi confermati",
-    pending: "In attesa di conferma",
+    accepted: "Accettato da Netatmo, in attesa di conferma",
+    pending: "Comando in coda o non confermato",
     unavailable: "Termostato non disponibile",
     temperature: "temperatura",
     hvac: "modalità",
@@ -28,7 +31,8 @@ const TEXT = {
   },
   en: {
     synced: "Synced: every command confirmed",
-    pending: "Waiting for confirmation",
+    accepted: "Accepted by Netatmo, waiting for confirmation",
+    pending: "Command queued or not confirmed",
     unavailable: "Thermostat unavailable",
     temperature: "temperature",
     hvac: "mode",
@@ -101,6 +105,7 @@ const STYLE = `
     background: var(--disabled-color, #bdbdbd);
   }
   .dot.synced { background: var(--success-color, #43a047); }
+  .dot.accepted { background: var(--warning-color, #ffa600); }
   .dot.pending {
     background: var(--error-color, #db4437);
     animation: pulse 1.4s ease-in-out infinite;
@@ -275,13 +280,12 @@ class SmartherHybridCard extends HTMLElement {
     let cls = "";
     let title = this._t("unavailable");
     if (stateObj && stateObj.state !== "unavailable" && "synced" in stateObj.attributes) {
-      if (stateObj.attributes.synced) {
-        cls = "synced";
-        title = this._t("synced");
-      } else {
-        cls = "pending";
-        const what = (stateObj.attributes.pending || []).map((k) => this._t(k) || k);
-        title = `${this._t("pending")}: ${what.join(", ")}`;
+      const attrs = stateObj.attributes;
+      cls = attrs.sync_state || (attrs.synced ? "synced" : "pending");
+      title = this._t(cls);
+      if (cls !== "synced") {
+        const what = (attrs.pending || []).map((k) => this._t(k) || k);
+        title = `${title}: ${what.join(", ")}`;
       }
     }
     this._dot.className = `dot ${cls}`;
