@@ -543,3 +543,405 @@ if (!customElements.get(CARD_TYPE)) {
     preview: true,
   });
 }
+
+/*
+ * Smarther Schedule card (read only for now).
+ *
+ * Shows the Netatmo heating schedules kept by the Netatmo integration: a
+ * week view (one bar per day, coloured by zone from cool blue to warm
+ * orange), the zones with their temperatures and a marker for now.
+ * Data comes from the `smarther_hybrid/schedules` websocket command.
+ */
+
+const SCHEDULE_CARD_TYPE = "smarther-schedule-card";
+const SCHEDULE_EDITOR_TYPE = "smarther-schedule-card-editor";
+const WEEK_MINUTES = 7 * 24 * 60;
+const DAY_MINUTES = 24 * 60;
+const SCHEDULE_REFRESH_MS = 60 * 1000;
+const COOL_RGB = [43, 154, 249];
+const WARM_RGB = [255, 129, 0];
+
+const SCHEDULE_TEXT = {
+  it: {
+    title: "Programma riscaldamento",
+    active: "attivo",
+    days: ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"],
+    empty: "Nessun programma di riscaldamento Netatmo trovato.",
+    error: "Impossibile leggere i programmi",
+    noTemp: "—",
+    cardTitle: "Titolo",
+  },
+  en: {
+    title: "Heating schedule",
+    active: "active",
+    days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+    empty: "No Netatmo heating schedule found.",
+    error: "Could not read the schedules",
+    noTemp: "—",
+    cardTitle: "Title",
+  },
+};
+
+const scheduleText = (hass) => {
+  const lang = ((hass && hass.language) || "en").split("-")[0];
+  return SCHEDULE_TEXT[lang] || SCHEDULE_TEXT.en;
+};
+
+const escapeHtml = (value) =>
+  String(value).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+const formatMinutes = (minutes) => {
+  const m = ((minutes % DAY_MINUTES) + DAY_MINUTES) % DAY_MINUTES;
+  const h = Math.floor(m / 60);
+  return `${String(h).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+};
+
+const formatTemp = (value) =>
+  value == null ? null : `${Number(value).toFixed(1).replace(/\.0$/, "")}°`;
+
+// Zone temperature: the single room's, or the warmest when several rooms.
+const zoneTemp = (zone) => {
+  const temps = (zone.rooms || [])
+    .map((r) => r.temperature)
+    .filter((t) => t != null);
+  return temps.length ? Math.max(...temps) : null;
+};
+
+// Week split into per-day segments [{day, start, end, zone}] (minutes in day).
+const daySegments = (timetable) => {
+  if (!timetable.length) return [];
+  const spans = timetable.map((entry, i) => ({
+    start: entry.m_offset,
+    end: i + 1 < timetable.length ? timetable[i + 1].m_offset : WEEK_MINUTES,
+    zone: entry.zone_id,
+  }));
+  // Before the first entry the week continues the last zone.
+  if (timetable[0].m_offset > 0) {
+    spans.unshift({
+      start: 0,
+      end: timetable[0].m_offset,
+      zone: timetable[timetable.length - 1].zone_id,
+    });
+  }
+  const segments = [];
+  for (let day = 0; day < 7; day++) {
+    const dayStart = day * DAY_MINUTES;
+    const dayEnd = dayStart + DAY_MINUTES;
+    for (const span of spans) {
+      const start = Math.max(span.start, dayStart);
+      const end = Math.min(span.end, dayEnd);
+      if (end > start) {
+        segments.push({ day, start: start - dayStart, end: end - dayStart, zone: span.zone });
+      }
+    }
+  }
+  return segments;
+};
+
+const SCHEDULE_STYLE = `
+  ha-card { padding: 16px; }
+  .header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .title {
+    flex: 1;
+    font-size: var(--ha-font-size-l, 18px);
+    font-weight: var(--ha-font-weight-medium, 500);
+    color: var(--primary-text-color);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .refresh {
+    border: none;
+    background: none;
+    color: var(--secondary-text-color);
+    cursor: pointer;
+    border-radius: 50%;
+    width: 36px;
+    height: 36px;
+    display: grid;
+    place-items: center;
+  }
+  .refresh:hover { background: rgba(var(--rgb-primary-text-color, 0, 0, 0), 0.06); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 12px;
+    border-radius: 16px;
+    border: 1px solid var(--divider-color);
+    background: none;
+    color: var(--primary-text-color);
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .chip.current {
+    background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.15);
+    border-color: transparent;
+  }
+  .chip .badge { font-size: 12px; color: var(--secondary-text-color); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 16px; }
+  .zone { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--primary-text-color); }
+  .swatch { width: 12px; height: 12px; border-radius: 4px; flex: none; }
+  .zone .temp { color: var(--secondary-text-color); }
+  .week { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center; }
+  .day { font-size: 13px; color: var(--secondary-text-color); }
+  .day.today { color: var(--primary-text-color); font-weight: 500; }
+  .bar {
+    position: relative;
+    height: 22px;
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--secondary-background-color, rgba(127, 127, 127, 0.15));
+  }
+  .seg { position: absolute; top: 0; bottom: 0; }
+  .seg + .seg { box-shadow: inset 1px 0 0 var(--card-background-color, #fff); }
+  .now {
+    position: absolute;
+    top: -2px;
+    bottom: -2px;
+    width: 2px;
+    margin-left: -1px;
+    background: var(--primary-text-color);
+    border-radius: 1px;
+  }
+  .axis {
+    grid-column: 2;
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--secondary-text-color);
+  }
+  .message { color: var(--secondary-text-color); padding: 8px 0; }
+`;
+
+class SmartherScheduleCard extends HTMLElement {
+  static getConfigElement() {
+    return document.createElement(SCHEDULE_EDITOR_TYPE);
+  }
+
+  static getStubConfig() {
+    return {};
+  }
+
+  setConfig(config) {
+    this._config = config || {};
+    this._shown = this._config.schedule || undefined;
+    this._draw();
+  }
+
+  set hass(hass) {
+    const first = !this._hass;
+    this._hass = hass;
+    if (first) this._load();
+  }
+
+  connectedCallback() {
+    this._timer = setInterval(() => this._load(), SCHEDULE_REFRESH_MS);
+    if (this._hass) this._load();
+  }
+
+  disconnectedCallback() {
+    clearInterval(this._timer);
+  }
+
+  getCardSize() {
+    return 6;
+  }
+
+  getGridOptions() {
+    return { columns: 12, min_columns: 6, rows: "auto" };
+  }
+
+  async _load() {
+    if (!this._hass) return;
+    try {
+      const result = await this._hass.callWS({ type: "smarther_hybrid/schedules" });
+      this._homes = result.homes || [];
+      this._error = undefined;
+    } catch (err) {
+      this._error = err && err.message ? err.message : String(err);
+    }
+    this._draw();
+  }
+
+  _home() {
+    const homes = this._homes || [];
+    const wanted = this._config.home;
+    return (
+      homes.find((h) => wanted && (h.id === wanted || h.name === wanted)) ||
+      homes.find((h) => h.schedules.length) ||
+      homes[0]
+    );
+  }
+
+  _draw() {
+    if (!this._config) return;
+    if (!this.shadowRoot) this.attachShadow({ mode: "open" });
+    const t = scheduleText(this._hass);
+    const home = this._homes && this._home();
+    const schedules = home ? home.schedules : [];
+    const schedule =
+      schedules.find((s) => s.id === this._shown || s.name === this._shown) ||
+      schedules.find((s) => s.selected) ||
+      schedules[0];
+
+    let body;
+    if (this._error) {
+      body = `<div class="message">${escapeHtml(t.error)}: ${escapeHtml(this._error)}</div>`;
+    } else if (!this._homes) {
+      body = "";
+    } else if (!schedule) {
+      body = `<div class="message">${escapeHtml(t.empty)}</div>`;
+    } else {
+      body = this._chips(schedules, schedule, t) + this._legend(schedule, t) + this._week(schedule, t);
+    }
+
+    const title = this._config.title || t.title;
+    this.shadowRoot.innerHTML = `
+      <style>${SCHEDULE_STYLE}</style>
+      <ha-card>
+        <div class="header">
+          <div class="title">${escapeHtml(title)}</div>
+          <button class="refresh" type="button" aria-label="refresh">
+            <ha-icon icon="mdi:refresh"></ha-icon>
+          </button>
+        </div>
+        ${body}
+      </ha-card>`;
+    this.shadowRoot.querySelector(".refresh").addEventListener("click", () => this._load());
+    this.shadowRoot.querySelectorAll(".chip").forEach((chip) =>
+      chip.addEventListener("click", () => {
+        this._shown = chip.dataset.id;
+        this._draw();
+      })
+    );
+  }
+
+  _chips(schedules, current, t) {
+    if (schedules.length < 2) return "";
+    const chips = schedules
+      .map(
+        (s) => `
+        <button class="chip ${s.id === current.id ? "current" : ""}" type="button" data-id="${escapeHtml(s.id)}">
+          ${s.selected ? '<ha-icon icon="mdi:check" style="--mdc-icon-size:16px"></ha-icon>' : ""}
+          ${escapeHtml(s.name)}
+          ${s.selected ? `<span class="badge">${escapeHtml(t.active)}</span>` : ""}
+        </button>`
+      )
+      .join("");
+    return `<div class="chips">${chips}</div>`;
+  }
+
+  _zoneColors(schedule) {
+    const temps = schedule.zones.map(zoneTemp).filter((v) => v != null);
+    const min = Math.min(...temps);
+    const max = Math.max(...temps);
+    const colors = {};
+    for (const zone of schedule.zones) {
+      const temp = zoneTemp(zone);
+      if (temp == null) {
+        colors[zone.id] = "var(--disabled-color, #bdbdbd)";
+        continue;
+      }
+      const k = max > min ? (temp - min) / (max - min) : 1;
+      const rgb = COOL_RGB.map((c, i) => Math.round(c + (WARM_RGB[i] - c) * k));
+      colors[zone.id] = `rgb(${rgb.join(",")})`;
+    }
+    return colors;
+  }
+
+  _legend(schedule, t) {
+    const colors = this._zoneColors(schedule);
+    const zones = schedule.zones
+      .map((zone) => {
+        const temp = formatTemp(zoneTemp(zone)) || t.noTemp;
+        return `
+          <span class="zone">
+            <span class="swatch" style="background:${colors[zone.id]}"></span>
+            ${escapeHtml(zone.name || zone.id)}
+            <span class="temp">${escapeHtml(temp)}</span>
+          </span>`;
+      })
+      .join("");
+    return `<div class="legend">${zones}</div>`;
+  }
+
+  _week(schedule, t) {
+    const colors = this._zoneColors(schedule);
+    const names = Object.fromEntries(schedule.zones.map((z) => [z.id, z.name || z.id]));
+    const segments = daySegments(schedule.timetable);
+    const now = new Date();
+    const today = (now.getDay() + 6) % 7;
+    const nowLeft = ((now.getHours() * 60 + now.getMinutes()) / DAY_MINUTES) * 100;
+
+    let rows = "";
+    for (let day = 0; day < 7; day++) {
+      const segs = segments
+        .filter((s) => s.day === day)
+        .map((s) => {
+          const left = (s.start / DAY_MINUTES) * 100;
+          const width = ((s.end - s.start) / DAY_MINUTES) * 100;
+          const tip = `${names[s.zone] || s.zone} · ${formatMinutes(s.start)}–${formatMinutes(s.end)}`;
+          return `<div class="seg" title="${escapeHtml(tip)}" style="left:${left}%;width:${width}%;background:${colors[s.zone] || "var(--disabled-color)"}"></div>`;
+        })
+        .join("");
+      const marker = day === today ? `<div class="now" style="left:${nowLeft}%"></div>` : "";
+      rows += `
+        <div class="day ${day === today ? "today" : ""}">${escapeHtml(t.days[day])}</div>
+        <div class="bar">${segs}${marker}</div>`;
+    }
+    const axis = ["0", "6", "12", "18", "24"].map((h) => `<span>${h}</span>`).join("");
+    return `<div class="week">${rows}<div class="axis">${axis}</div></div>`;
+  }
+}
+
+class SmartherScheduleCardEditor extends HTMLElement {
+  setConfig(config) {
+    this._config = config;
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    this._render();
+  }
+
+  _render() {
+    if (!this._config) return;
+    if (!this._form) {
+      this._form = document.createElement("ha-form");
+      this._form.schema = [{ name: "title", selector: { text: {} } }];
+      this._form.addEventListener("value-changed", (ev) => {
+        ev.stopPropagation();
+        const config = { ...this._config, ...ev.detail.value };
+        if (!config.title) delete config.title;
+        this._config = config;
+        this.dispatchEvent(
+          new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true })
+        );
+      });
+      this.replaceChildren(this._form);
+    }
+    this._form.hass = this._hass;
+    this._form.data = { title: this._config.title || "" };
+    this._form.computeLabel = () => scheduleText(this._hass).cardTitle;
+  }
+}
+
+if (!customElements.get(SCHEDULE_EDITOR_TYPE)) {
+  customElements.define(SCHEDULE_EDITOR_TYPE, SmartherScheduleCardEditor);
+}
+
+if (!customElements.get(SCHEDULE_CARD_TYPE)) {
+  customElements.define(SCHEDULE_CARD_TYPE, SmartherScheduleCard);
+  window.customCards = window.customCards || [];
+  window.customCards.push({
+    type: SCHEDULE_CARD_TYPE,
+    name: "Smarther Schedule",
+    description: "Week view of the Netatmo heating schedules.",
+    preview: true,
+  });
+}

@@ -14,6 +14,7 @@ from homeassistant.helpers.typing import ConfigType
 from homeassistant.loader import async_get_integration
 
 from .const import DOMAIN
+from .schedule import async_register_websocket
 from .sync import SyncState
 
 PLATFORMS = [Platform.CLIMATE, Platform.BINARY_SENSOR]
@@ -27,7 +28,8 @@ CARD_URL = f"/{DOMAIN}/{CARD_FILE}"
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Serve the Lovelace card and load it in the frontend."""
+    """Serve the Lovelace cards and load them in the frontend."""
+    async_register_websocket(hass)
     if getattr(hass, "http", None) is None:
         return True  # no web server (e.g. tests): nothing to serve
 
@@ -51,7 +53,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     except Exception:  # noqa: BLE001 - never block setup over the card
         _LOGGER.exception("Could not add the card to the dashboard resources")
         registered = False
-    if not registered:
+    if not registered and "frontend" in hass.config.components:
         add_extra_js_url(hass, url)
     return True
 

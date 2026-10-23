@@ -122,6 +122,21 @@ Un comando è "confermato" quando la sorgente riporta il valore inviato:
 
 Un comando rifiutato resta rosso finché non ne mandi un altro dello stesso tipo. Un comando superato da un altro (es. un preset in coda annullato da Spento) non conta più. L'entità espone `synced`, `sync_state` (`synced`/`accepted`/`pending`) e `pending`; c'è anche il sensore binario **"… sincronizzato"**, utile per le automazioni (es. avviso se resta spento per più di 10 minuti).
 
+## Card del programma (sola lettura)
+
+Una seconda card, **Smarther Schedule**, mostra i **programmi di riscaldamento Netatmo**:
+
+- vista settimanale, una barra per giorno con le fasce colorate per zona (dal blu, più freddo, all'arancione, più caldo) e un indicatore dell'ora attuale;
+- legenda delle zone con la temperatura (passando sopra una fascia: zona e orario);
+- chip per guardare gli altri programmi, con quello attivo segnato.
+
+```yaml
+type: custom:smarther-schedule-card
+title: Programma soggiorno   # facoltativo
+```
+
+I dati vengono da quelli che l'integrazione Netatmo ha già in memoria (nessuna chiamata in più al cloud) e si aggiornano ogni minuto. Per ora è **solo lettura**: la modifica di temperature e fasce arriverà nelle prossime versioni. Per cambiare il programma *attivo* usa la select dell'integrazione Netatmo.
+
 ## Limiti noti
 
 - **Senza internet** funzionano stato, setpoint, Riscaldamento e Spento; Auto e i preset danno errore finché il cloud Netatmo non torna. Il mantenimento non può distinguere un ritorno al programma da un cambio fatto sul termostato, quindi adotta il nuovo valore.
