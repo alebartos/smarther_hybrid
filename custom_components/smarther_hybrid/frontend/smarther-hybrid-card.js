@@ -225,9 +225,13 @@ class SmartherHybridCard extends HTMLElement {
   }
 
   getGridOptions() {
-    return this._card && this._card.getGridOptions
-      ? this._card.getGridOptions()
-      : { columns: 12, rows: "auto", min_columns: 6 };
+    if (this._card && this._card.getGridOptions) return this._card.getGridOptions();
+    // The thermostat card is created asynchronously: until then answer like
+    // it would (same formula), or the grid gives too little room and the
+    // cards below overlap the features.
+    const features = (this._config && this._config.features) || [];
+    const extra = Math.ceil((features.length * 2) / 3);
+    return { columns: 12, rows: 5 + extra, min_columns: 6, min_rows: 2 + extra };
   }
 
   getLayoutOptions() {
