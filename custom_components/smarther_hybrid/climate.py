@@ -84,9 +84,10 @@ from .const import (
     NETATMO_COMMAND_INTERVAL,
     NETATMO_DOMAIN,
     NETATMO_PRESET_ALIASES,
+    NETATMO_OFF_PRESETS,
     NETATMO_PRESET_HOME,
-    NETATMO_PRESET_OFF,
     NETATMO_SERVICE_CLEAR_TEMPERATURE_SETTING,
+    OFF_SETTLE_SECONDS,
     PRESET_AWAY,
     PRESET_BOOST,
     PRESET_FROST_GUARD,
@@ -155,14 +156,12 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
         self._hold_temperature: float | None = None
         self._last_preset: str = PRESET_SCHEDULE
         self._off_requested = False
+        self._off_since: datetime | None = None
         self._last_reapply: datetime | None = None
         self._unsub_settle: CALLBACK_TYPE | None = None
         self._netatmo_last_sent: datetime | None = None
         self._netatmo_pending: str | None = None
         self._unsub_netatmo: CALLBACK_TYPE | None = None
-        # Preset confirmed by HomeKit before Netatmo caught up: shown while
-        # Netatmo still reports the stale value.
-        self._confirmed_preset: tuple[str, str | None] | None = None
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -228,9 +227,21 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
             return False
         if not self._homekit_on():
             return True
-        if self._netatmo_preset(aliases=False) == NETATMO_PRESET_OFF:
+        if self._netatmo_preset(aliases=False) in NETATMO_OFF_PRESETS:
             return True
         return self._off_requested and self._frost_on_homekit()
+
+    def _turned_on_elsewhere(self) -> bool:
+        """After Off here, the thermostat clearly runs again (app, keypad)."""
+        if "hvac" in self._sync.pending or self._frost_on_homekit():
+            return False
+        if self._netatmo_preset(aliases=False) in NETATMO_OFF_PRESETS:
+            return False
+        # Readings right after Off can still carry the old setpoint.
+        return (
+            self._off_since is None
+            or (dt_util.utcnow() - self._off_since).total_seconds() > OFF_SETTLE_SECONDS
+        )
 
     def _frost_on_homekit(self) -> bool:
         """HomeKit shows frost protection: off, or a frost-level setpoint."""
@@ -290,10 +301,6 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
         preset = self._netatmo_preset()
         if preset is not None and accepted == preset:
             self._sync.forget("preset")
-        elif accepted == PRESET_FROST_GUARD and self._frost_on_homekit():
-            # The thermostat itself confirms frost protection, locally.
-            self._sync.forget("preset")
-            self._confirmed_preset = (PRESET_FROST_GUARD, preset)
         self._sync.available = self.available
         self._sync.notify()
 
@@ -320,7 +327,6 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
 
     async def _netatmo_apply(self, preset_mode: str) -> None:
         """Send a preset to Netatmo; accepted once the cloud call succeeds."""
-        self._confirmed_preset = None
         self._sync.forget("preset")
         self._sync.pending["preset"] = preset_mode
         try:
@@ -402,16 +408,16 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
 
     @property
     def preset_mode(self) -> str | None:
-        """The preset just chosen until Netatmo confirms it, then Netatmo's."""
+        """The preset just chosen until Netatmo confirms it, then Netatmo's.
+
+        None while off: frost protection is the Off mode, not a preset.
+        """
         for waiting in (self._sync.pending, self._sync.accepted):
             if "preset" in waiting:
                 return waiting["preset"]
-        preset = self._netatmo_preset()
-        if self._confirmed_preset is not None:
-            confirmed, stale = self._confirmed_preset
-            if preset == stale:
-                return confirmed
-        return preset
+        if self._is_off():
+            return None
+        return self._netatmo_preset()
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -500,12 +506,7 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
 
     @callback
     def _homekit_changed(self, event: Event[EventStateChangedData]) -> None:
-        if (
-            self._off_requested
-            and "hvac" not in self._sync.pending
-            and not self._frost_on_homekit()
-        ):
-            # Turned back on elsewhere (app, thermostat).
+        if self._off_requested and self._turned_on_elsewhere():
             self._off_requested = False
         if self._hold_temperature is not None:
             if not self._homekit_on():
@@ -628,6 +629,7 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
             self._stop_hold()
             self._cancel_netatmo_queue()
             self._off_requested = True
+            self._off_since = dt_util.utcnow()
             await self._command(
                 SERVICE_SET_HVAC_MODE, self._homekit_id, hvac_mode=HVACMode.OFF
             )

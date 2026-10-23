@@ -16,17 +16,17 @@ PRESET_FROST_GUARD = "frost_guard"
 # Reported by Netatmo after a manual setpoint change; read-only here.
 PRESET_MANUAL = "manual"
 
-SETTABLE_PRESETS = [PRESET_SCHEDULE, PRESET_AWAY, PRESET_BOOST, PRESET_FROST_GUARD]
+# No frost guard: on the Smarther it is the same as off, so it is Off.
+SETTABLE_PRESETS = [PRESET_SCHEDULE, PRESET_AWAY, PRESET_BOOST]
 # Netatmo reports "home" for a room following the schedule.
 NETATMO_PRESET_HOME = "home"
-# Other names Netatmo may report, shown (and confirmed) as our presets. On
-# the Smarther "off" is frost protection. Not used to remember the last preset.
+# Other names Netatmo may report, shown (and confirmed) as our presets.
 NETATMO_PRESET_ALIASES = {
     NETATMO_PRESET_HOME: PRESET_SCHEDULE,
-    "hg": PRESET_FROST_GUARD,
-    "off": PRESET_FROST_GUARD,
     "max": PRESET_BOOST,
 }
+# Netatmo presets meaning the Smarther is off (frost protection).
+NETATMO_OFF_PRESETS = {"off", "hg", PRESET_FROST_GUARD}
 
 # Attribute name used by the Netatmo climate entity.
 NETATMO_ATTR_SELECTED_SCHEDULE = "selected_schedule"
@@ -67,8 +67,9 @@ TEMP_TOLERANCE = 0.05
 # Off was chosen here: shown as Off while the thermostat stays in frost
 # protection, even if HomeKit reports it on at 7 °C.
 ATTR_OFF_REQUESTED = "off_requested"
-# Netatmo's raw preset for a thermostat that is off.
-NETATMO_PRESET_OFF = "off"
+# After Off, ignore "back on" readings for this long: the Smarther briefly
+# reports its old setpoint before settling at 7 °C.
+OFF_SETTLE_SECONDS = 120
 
 # Preset re-sent to Netatmo when Auto is chosen.
 ATTR_LAST_PRESET = "last_preset"
