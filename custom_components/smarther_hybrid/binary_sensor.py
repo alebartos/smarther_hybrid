@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import ATTR_PENDING, ATTR_SYNC_STATE
+from .device import device_info
 from .sync import SyncState
 
 
@@ -30,6 +31,7 @@ class SmartherSyncedSensor(BinarySensorEntity):
         """Initialize from the config entry."""
         self._sync = sync
         self._attr_unique_id = f"{entry.entry_id}_synced"
+        self._attr_device_info = device_info(entry)
         self._attr_name = f"{entry.title} sincronizzato"
 
     async def async_added_to_hass(self) -> None:

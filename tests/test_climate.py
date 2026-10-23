@@ -545,3 +545,18 @@ async def test_commands_work_right_after_off(hass, calls):
     set_netatmo(hass, preset="schedule")
     await hass.async_block_till_done()
     assert hass.states.get(ENTITY).state == HVACMode.AUTO
+
+
+async def test_entities_belong_to_one_device(hass, calls):
+    from homeassistant.helpers import device_registry as dr, entity_registry as er
+
+    entry = await setup(hass)
+    devices = dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id)
+    assert len(devices) == 1
+    assert devices[0].name == "Smarther Soggiorno"
+    ents = er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)
+    assert {e.entity_id for e in ents} == {ENTITY, SYNCED}
+    assert {e.device_id for e in ents} == {devices[0].id}
+    # Names are unchanged.
+    assert hass.states.get(ENTITY).name == "Smarther Soggiorno"
+    assert hass.states.get(SYNCED).name == "Smarther Soggiorno sincronizzato"

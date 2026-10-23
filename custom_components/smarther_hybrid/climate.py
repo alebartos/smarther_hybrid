@@ -97,6 +97,7 @@ from .const import (
     TEMP_TOLERANCE,
     TURN_ON_SETTLE_SECONDS,
 )
+from .device import device_info
 from .sync import SyncState
 
 _LOGGER = logging.getLogger(__name__)
@@ -152,6 +153,7 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
         )
         self._attr_name = entry.title
         self._attr_unique_id = entry.entry_id
+        self._attr_device_info = device_info(entry)
 
         self._hold_temperature: float | None = None
         self._last_preset: str = PRESET_SCHEDULE
