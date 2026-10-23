@@ -33,6 +33,8 @@ L'integrazione **non parla direttamente con il termostato**: legge e comanda le 
    - l'entità climate **Netatmo** del termostato,
    - facoltativo: il sensore di umidità HomeKit del termostato.
 
+L'integrazione compare in **Impostazioni → Dispositivi e servizi → Integrazioni** (fino alla v0.13 era tra gli **Aiutanti**); da lì si configura, si cambiano le opzioni o si elimina. Il logo viene mostrato da Home Assistant 2026.3 in poi.
+
 ### Installazione manuale
 
 Copia la cartella `custom_components/smarther_hybrid` in `/config/custom_components/` e riavvia Home Assistant.
