@@ -315,3 +315,72 @@ async def test_off_drops_queued_netatmo_command(hass, calls):
         await service(hass, "set_hvac_mode", hvac_mode="off")
         await advance(hass, 3.5)
         assert call("set_preset_mode", NA, preset_mode="boost") not in calls.await_args_list
+
+
+SYNCED = "binary_sensor.smarther_soggiorno_sincronizzato"
+
+
+async def test_synced_at_start(hass, calls):
+    await setup(hass)
+    assert hass.states.get(ENTITY).attributes["synced"] is True
+    assert hass.states.get(SYNCED).state == "on"
+
+
+async def test_setpoint_pending_until_homekit_confirms(hass, calls):
+    await setup(hass)
+    await service(hass, "set_temperature", temperature=21.5)
+    state = hass.states.get(ENTITY)
+    assert state.attributes["synced"] is False
+    assert state.attributes["pending"] == ["temperature"]
+    assert hass.states.get(SYNCED).state == "off"
+
+    set_homekit(hass, temperature=21.5)
+    await hass.async_block_till_done()
+    assert hass.states.get(ENTITY).attributes["synced"] is True
+    assert hass.states.get(SYNCED).state == "on"
+
+
+async def test_preset_pending_until_netatmo_confirms(hass, calls):
+    await setup(hass)
+    await service(hass, "set_preset_mode", preset_mode="away")
+    assert hass.states.get(ENTITY).attributes["pending"] == ["preset"]
+    set_netatmo(hass, preset="away")
+    await hass.async_block_till_done()
+    assert hass.states.get(ENTITY).attributes["synced"] is True
+
+
+async def test_off_pending_until_homekit_off(hass, calls):
+    await setup(hass)
+    await service(hass, "set_hvac_mode", hvac_mode="off")
+    assert hass.states.get(ENTITY).attributes["pending"] == ["hvac"]
+    set_homekit(hass, state="off", temperature=7.0)
+    await hass.async_block_till_done()
+    assert hass.states.get(ENTITY).attributes["synced"] is True
+
+
+async def test_failed_command_is_not_pending(hass, calls):
+    await setup(hass)
+    calls.side_effect = HomeAssistantError("boom")
+    with pytest.raises(HomeAssistantError):
+        await service(hass, "set_temperature", temperature=23)
+    assert hass.states.get(ENTITY).attributes["synced"] is True
+
+
+async def test_queued_preset_is_pending_and_dropped_by_off(hass, calls):
+    with patch("custom_components.smarther_hybrid.climate.NETATMO_COMMAND_INTERVAL", 3):
+        await setup(hass)
+        await service(hass, "set_preset_mode", preset_mode="away")
+        set_netatmo(hass, preset="away")
+        await service(hass, "set_preset_mode", preset_mode="boost")  # queued
+        await hass.async_block_till_done()
+        assert hass.states.get(ENTITY).attributes["pending"] == ["preset"]
+
+        await service(hass, "set_hvac_mode", hvac_mode="off")
+        assert hass.states.get(ENTITY).attributes["pending"] == ["hvac"]
+
+
+async def test_synced_sensor_unavailable_without_homekit(hass, calls):
+    await setup(hass)
+    hass.states.async_set(HK, "unavailable")
+    await hass.async_block_till_done()
+    assert hass.states.get(SYNCED).state == "unavailable"

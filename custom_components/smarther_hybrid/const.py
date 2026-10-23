@@ -43,5 +43,11 @@ ATTR_HOLD_TEMPERATURE = "hold_temperature"
 # arrive in between, only the latest is sent.
 NETATMO_COMMAND_INTERVAL = 3.0
 
+# Sync status of the commands sent.
+ATTR_SYNCED = "synced"
+ATTR_PENDING = "pending"
+# Setpoints closer than this count as confirmed.
+TEMP_TOLERANCE = 0.05
+
 # Preset re-sent to Netatmo when Auto is chosen.
 ATTR_LAST_PRESET = "last_preset"

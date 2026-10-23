@@ -66,6 +66,8 @@ from .const import (
     ATTR_HOLD_ACTIVE,
     ATTR_HOLD_TEMPERATURE,
     ATTR_LAST_PRESET,
+    ATTR_PENDING,
+    ATTR_SYNCED,
     CONF_HOLD_REFRESH_HOURS,
     CONF_HOMEKIT_ENTITY,
     CONF_HUMIDITY_ENTITY,
@@ -84,8 +86,10 @@ from .const import (
     PRESET_SCHEDULE,
     SETTABLE_PRESETS,
     TEMP_STEP,
+    TEMP_TOLERANCE,
     TURN_ON_SETTLE_SECONDS,
 )
+from .sync import SyncState
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -110,7 +114,7 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up the hybrid climate entity."""
-    async_add_entities([SmartherHybridClimate(entry)])
+    async_add_entities([SmartherHybridClimate(entry, entry.runtime_data)])
 
 
 class SmartherHybridClimate(ClimateEntity, RestoreEntity):
@@ -129,8 +133,9 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
         | ClimateEntityFeature.TURN_OFF
     )
 
-    def __init__(self, entry: ConfigEntry) -> None:
+    def __init__(self, entry: ConfigEntry, sync: SyncState) -> None:
         """Initialize from the config entry."""
+        self._sync = sync
         self._homekit_id: str = entry.data[CONF_HOMEKIT_ENTITY]
         self._netatmo_id: str = entry.data[CONF_NETATMO_ENTITY]
         self._humidity_id: str | None = entry.data.get(CONF_HUMIDITY_ENTITY)
@@ -216,6 +221,50 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
         """Available as long as the local HomeKit entity is."""
         return _usable(self._homekit)
 
+    @callback
+    def async_write_ha_state(self) -> None:
+        """Check which commands are now confirmed before writing the state."""
+        self._reconcile()
+        super().async_write_ha_state()
+
+    # -- sync ----------------------------------------------------------------
+
+    @callback
+    def _reconcile(self) -> None:
+        """Drop the commands the sources now confirm."""
+        pending = self._sync.pending
+        if "temperature" in pending:
+            target = self.target_temperature
+            if target is not None and abs(target - pending["temperature"]) < TEMP_TOLERANCE:
+                del pending["temperature"]
+        if "hvac" in pending and _usable(self._homekit):
+            if (pending["hvac"] == HVACMode.OFF) != self._homekit_on():
+                del pending["hvac"]
+        if "preset" in pending and self._netatmo_preset() == pending["preset"]:
+            del pending["preset"]
+        self._sync.available = self.available
+        self._sync.notify()
+
+    @staticmethod
+    def _expectation(service: str, data: dict[str, Any]) -> tuple[str, Any]:
+        if service == SERVICE_SET_TEMPERATURE:
+            return "temperature", float(data[ATTR_TEMPERATURE])
+        if service == SERVICE_SET_HVAC_MODE:
+            return "hvac", HVACMode.OFF if data["hvac_mode"] == HVACMode.OFF else HVACMode.HEAT
+        return "preset", data["preset_mode"]
+
+    async def _command(self, service: str, entity_id: str, **data: Any) -> None:
+        """Send a command and wait for a source to confirm it."""
+        key, expected = self._expectation(service, data)
+        self._sync.pending[key] = expected
+        try:
+            await self._call(service, entity_id, **data)
+        except Exception:
+            self._sync.pending.pop(key, None)
+            self.async_write_ha_state()
+            raise
+        self.async_write_ha_state()
+
     @property
     def hvac_mode(self) -> HVACMode | None:
         """Off from HomeKit, Heat while holding, otherwise Auto (Netatmo in charge)."""
@@ -287,6 +336,8 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
             ATTR_HOLD_ACTIVE: self._hold_temperature is not None,
             ATTR_HOLD_TEMPERATURE: self._hold_temperature,
             ATTR_LAST_PRESET: self._last_preset,
+            ATTR_SYNCED: self._sync.synced,
+            ATTR_PENDING: sorted(self._sync.pending),
             NETATMO_ATTR_SELECTED_SCHEDULE: (
                 netatmo.attributes.get(NETATMO_ATTR_SELECTED_SCHEDULE)
                 if _usable(netatmo)
@@ -345,7 +396,7 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
         ):
             return
         self._last_reapply = now
-        await self._call(
+        await self._command(
             SERVICE_SET_TEMPERATURE, self._homekit_id, temperature=self._hold_temperature
         )
 
@@ -398,6 +449,8 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
             self._unsub_netatmo()
             self._unsub_netatmo = None
         self._netatmo_pending = None
+        # Superseded: an unconfirmed preset no longer matters.
+        self._sync.pending.pop("preset", None)
 
     async def _send_netatmo_preset(self, preset_mode: str) -> None:
         """Send now, or queue it if the previous command went out too recently.
@@ -413,11 +466,12 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
         )
         if wait <= 0 and self._unsub_netatmo is None:
             self._netatmo_last_sent = now
-            await self._call(
+            await self._command(
                 SERVICE_SET_PRESET_MODE, self._netatmo_id, preset_mode=preset_mode
             )
             return
         self._netatmo_pending = preset_mode
+        self._sync.pending["preset"] = preset_mode
         if self._unsub_netatmo is None:
             self._unsub_netatmo = async_call_later(
                 self.hass, max(wait, 0.0), self._flush_netatmo
@@ -430,7 +484,7 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
             return
         self._netatmo_last_sent = dt_util.utcnow()
         try:
-            await self._call(
+            await self._command(
                 SERVICE_SET_PRESET_MODE, self._netatmo_id, preset_mode=preset_mode
             )
         except HomeAssistantError as err:
@@ -451,7 +505,7 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
         """Turn the thermostat on if needed; return True if it was off."""
         if self._homekit_on():
             return False
-        await self._call(
+        await self._command(
             SERVICE_SET_HVAC_MODE, self._homekit_id, hvac_mode=HVACMode.HEAT
         )
         return True
@@ -469,7 +523,7 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
         if self._hold_temperature is not None:
             self._hold_temperature = float(temperature)
             self._cancel_settle()
-        await self._call(
+        await self._command(
             SERVICE_SET_TEMPERATURE, self._homekit_id, temperature=temperature
         )
         self.async_write_ha_state()
@@ -479,7 +533,7 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
         if hvac_mode == HVACMode.OFF:
             self._stop_hold()
             self._cancel_netatmo_queue()
-            await self._call(
+            await self._command(
                 SERVICE_SET_HVAC_MODE, self._homekit_id, hvac_mode=HVACMode.OFF
             )
         elif hvac_mode == HVACMode.AUTO:
@@ -500,7 +554,7 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
             if target is not None and target > FROST_GUARD_TEMP:
                 self._hold_temperature = target
                 # Turn the current value into a manual change.
-                await self._call(
+                await self._command(
                     SERVICE_SET_TEMPERATURE, self._homekit_id, temperature=target
                 )
         else:

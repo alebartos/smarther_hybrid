@@ -69,6 +69,40 @@ Regole:
 - **Scelta del programma settimanale:** usa la select creata dall'integrazione Netatmo.
 - **Comandi a Netatmo distanziati di 3 secondi.** Netatmo è lento: il primo comando parte subito, quelli che arrivano entro 3 secondi aspettano, e della coda parte solo l'ultimo (es. Assenza → Boost → Programma in fretta: a Netatmo arriva Assenza e poi Programma). Scegliere Spento o Riscaldamento annulla i comandi Netatmo in coda. I comandi HomeKit partono sempre subito.
 
+## Card per la dashboard
+
+L'integrazione installa anche una card, **Smarther Hybrid**. Non serve aggiungere risorse a mano: compare tra le card dopo il riavvio. È la card termostato di Home Assistant, identica, con in più:
+
+- **in basso a sinistra**, sopra le modalità: l'**umidità**;
+- **in basso a destra**, sopra le modalità: il **pallino di sincronizzazione**
+  - 🟢 verde: tutti i comandi inviati sono stati confermati,
+  - 🔴 rosso (lampeggia): almeno un comando non è ancora confermato (passandoci sopra si vede quale),
+  - ⚪ grigio: termostato non disponibile.
+
+```yaml
+type: custom:smarther-hybrid-card
+entity: climate.smarther_soggiorno
+humidity_entity: sensor.umidita_soggiorno   # facoltativo: senza, usa l'umidità dell'entità
+features:
+  - type: climate-hvac-modes
+    hvac_modes: [auto, heat, "off"]
+  - type: climate-preset-modes
+    style: dropdown
+```
+
+Tutte le altre opzioni della card termostato (`name`, `features`, `show_current_as_primary`…) funzionano allo stesso modo.
+
+### Sincronizzazione
+
+Un comando è "confermato" quando la sorgente riporta il valore inviato:
+
+| Comando | Confermato quando |
+|---|---|
+| Setpoint, Riscaldamento/Spento, rinvio del mantenimento | **HomeKit** riporta quel valore (risposta del termostato, in locale) |
+| Preset e Auto (anche in coda) | **Netatmo** riporta quel preset (cioè il cloud lo ha accettato) |
+
+Un comando superato da un altro (es. un preset in coda annullato da Spento) non conta più. L'entità espone `synced` e `pending`; c'è anche il sensore binario **"… sincronizzato"**, utile per le automazioni (es. avviso se resta spento per più di 10 minuti).
+
 ## Limiti noti
 
 - **Senza internet** funzionano stato, setpoint, Riscaldamento e Spento; Auto e i preset danno errore finché il cloud Netatmo non torna. Il mantenimento non può distinguere un ritorno al programma da un cambio fatto sul termostato, quindi adotta il nuovo valore.
