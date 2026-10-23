@@ -127,8 +127,8 @@ const STYLE = `
   }
   .humidity {
     position: relative;
-    width: 56px;
-    height: 56px;
+    width: var(--smarther-humidity-size, 56px);
+    height: var(--smarther-humidity-size, 56px);
     display: grid;
     place-items: center;
   }
@@ -147,14 +147,14 @@ const STYLE = `
   }
   .humidity ha-icon {
     position: absolute;
-    --mdc-icon-size: 30px;
+    --mdc-icon-size: calc(var(--smarther-humidity-size, 56px) * 0.54);
     color: var(--smarther-humidity-color, #2196f3);
     opacity: 0.18;
   }
   .humidity .value {
     position: relative;
     color: var(--primary-text-color);
-    font-size: 14px;
+    font-size: calc(var(--smarther-humidity-size, 56px) * 0.25);
     font-weight: 500;
   }
   .dot {
@@ -368,7 +368,16 @@ class SmartherHybridCard extends HTMLElement {
   }
 
   _position() {
-    if (!this._card || !this._overlay) return;
+    if (!this._overlay) return;
+    // The dial shrinks with the card: so does the humidity ring, or it would
+    // touch the end of the dial's arc on narrow cards.
+    const width = this.getBoundingClientRect().width;
+    if (width) {
+      const size = Math.round(Math.min(56, Math.max(38, width * 0.115)));
+      this._overlay.style.setProperty("--smarther-humidity-size", `${size}px`);
+      this._overlay.style.left = this._overlay.style.right = `${size < 48 ? 10 : 16}px`;
+    }
+    if (!this._card) return;
     const features =
       this._card.shadowRoot &&
       this._card.shadowRoot.querySelector("hui-card-features");
