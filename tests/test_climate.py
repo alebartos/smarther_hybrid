@@ -409,3 +409,20 @@ async def test_reselecting_current_preset_is_synced_once_accepted(hass, calls):
     await setup(hass)  # Netatmo already reports schedule
     await service(hass, "set_preset_mode", preset_mode="schedule")
     assert hass.states.get(ENTITY).attributes["sync_state"] == "synced"
+
+
+async def test_chosen_preset_shown_until_netatmo_confirms(hass, calls):
+    await setup(hass)
+    set_netatmo(hass, preset="manual", state="heat")
+    await service(hass, "set_hvac_mode", hvac_mode="heat")
+    await service(hass, "set_hvac_mode", hvac_mode="auto")
+    # Netatmo still says manual: the chosen preset stays highlighted.
+    assert hass.states.get(ENTITY).attributes["preset_mode"] == "schedule"
+    assert hass.states.get(ENTITY).attributes["sync_state"] == "accepted"
+
+    # Netatmo catches up (it may report "home" for the schedule).
+    set_netatmo(hass, preset="home", state="auto")
+    await hass.async_block_till_done()
+    state = hass.states.get(ENTITY)
+    assert state.attributes["preset_mode"] == "schedule"
+    assert state.attributes["sync_state"] == "synced"

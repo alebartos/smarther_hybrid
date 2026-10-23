@@ -17,6 +17,8 @@ PRESET_FROST_GUARD = "frost_guard"
 PRESET_MANUAL = "manual"
 
 SETTABLE_PRESETS = [PRESET_SCHEDULE, PRESET_AWAY, PRESET_BOOST, PRESET_FROST_GUARD]
+# Netatmo reports "home" for a room following the schedule.
+NETATMO_PRESET_HOME = "home"
 
 # Attribute name used by the Netatmo climate entity.
 NETATMO_ATTR_SELECTED_SCHEDULE = "selected_schedule"

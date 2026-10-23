@@ -82,6 +82,7 @@ from .const import (
     NETATMO_ATTR_SELECTED_SCHEDULE,
     NETATMO_COMMAND_INTERVAL,
     NETATMO_DOMAIN,
+    NETATMO_PRESET_HOME,
     NETATMO_SERVICE_CLEAR_TEMPERATURE_SETTING,
     PRESET_AWAY,
     PRESET_BOOST,
@@ -215,7 +216,10 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
 
     def _netatmo_preset(self) -> str | None:
         state = self._netatmo
-        return state.attributes.get(ATTR_PRESET_MODE) if _usable(state) else None
+        if not _usable(state):
+            return None
+        preset = state.attributes.get(ATTR_PRESET_MODE)
+        return PRESET_SCHEDULE if preset == NETATMO_PRESET_HOME else preset
 
     # -- state ---------------------------------------------------------------
 
@@ -354,7 +358,10 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
 
     @property
     def preset_mode(self) -> str | None:
-        """Current Netatmo preset, including the read-only "manual"."""
+        """The preset just chosen until Netatmo confirms it, then Netatmo's."""
+        for waiting in (self._sync.pending, self._sync.accepted):
+            if "preset" in waiting:
+                return waiting["preset"]
         return self._netatmo_preset()
 
     @property
