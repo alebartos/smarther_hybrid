@@ -567,6 +567,7 @@ const SCHEDULE_TEXT = {
     active: "attivo",
     days: ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"],
     empty: "Nessun programma di riscaldamento Netatmo trovato.",
+    noNetatmo: "Integrazione Netatmo non trovata o non ancora caricata.",
     error: "Impossibile leggere i programmi",
     noTemp: "—",
     cardTitle: "Titolo",
@@ -579,6 +580,7 @@ const SCHEDULE_TEXT = {
     active: "active",
     days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
     empty: "No Netatmo heating schedule found.",
+    noNetatmo: "Netatmo integration not found or not loaded yet.",
     error: "Could not read the schedules",
     noTemp: "—",
     cardTitle: "Title",
@@ -784,6 +786,7 @@ class SmartherScheduleCard extends HTMLElement {
     try {
       const result = await this._hass.callWS({ type: "smarther_hybrid/schedules" });
       this._homes = result.homes || [];
+      this._netatmoFound = result.netatmo_found !== false;
       this._error = undefined;
     } catch (err) {
       this._error = err && err.message ? err.message : String(err);
@@ -817,6 +820,8 @@ class SmartherScheduleCard extends HTMLElement {
       body = `<div class="message">${escapeHtml(t.error)}: ${escapeHtml(this._error)}</div>`;
     } else if (!this._homes) {
       body = "";
+    } else if (!this._netatmoFound) {
+      body = `<div class="message">${escapeHtml(t.noNetatmo)}</div>`;
     } else if (!schedule) {
       body = `<div class="message">${escapeHtml(t.empty)}</div>`;
     } else {

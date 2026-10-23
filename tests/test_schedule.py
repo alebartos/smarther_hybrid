@@ -44,7 +44,11 @@ def fake_netatmo(hass):
         schedules={"s1": winter, "s2": lights},
     )
     handler = NS(account=NS(homes={"h1": home}))
-    hass.data["netatmo"] = {"entry": {"netatmo_data_handler": handler}}
+    # Recent Home Assistant: the data handler is the entry's runtime_data.
+    entry = MockConfigEntry(domain="netatmo")
+    entry.add_to_hass(hass)
+    entry.runtime_data = handler
+    return home
 
 
 async def test_ws_schedules(hass, hass_ws_client):
@@ -84,14 +88,13 @@ async def test_ws_schedules_without_netatmo(hass, hass_ws_client):
     client = await hass_ws_client(hass)
     await client.send_json({"id": 1, "type": "smarther_hybrid/schedules"})
     msg = await client.receive_json()
-    assert msg["result"] == {"homes": []}
+    assert msg["result"] == {"homes": [], "netatmo_found": False}
 
 
 async def _client_with_two_schedules(hass, hass_ws_client):
     assert await async_setup_component(hass, "websocket_api", {})
     assert await async_setup_component(hass, DOMAIN, {})
-    fake_netatmo(hass)
-    home = hass.data["netatmo"]["entry"]["netatmo_data_handler"].account.homes["h1"]
+    home = fake_netatmo(hass)
     summer = NS(
         entity_id="s3",
         name="Estate",
@@ -146,3 +149,21 @@ async def test_ws_switch_refused(hass, hass_ws_client):
     )
     msg = await client.receive_json()
     assert msg["error"]["code"] == "switch_failed"
+
+
+
+async def test_ws_schedules_legacy_hass_data(hass, hass_ws_client):
+    """Older Home Assistant kept the data handler in hass.data."""
+    assert await async_setup_component(hass, "websocket_api", {})
+    assert await async_setup_component(hass, DOMAIN, {})
+    fake_netatmo(hass)
+    entry = hass.config_entries.async_entries("netatmo")[0]
+    handler = entry.runtime_data
+    del entry.runtime_data
+    hass.data["netatmo"] = {entry.entry_id: {"netatmo_data_handler": handler}}
+
+    client = await hass_ws_client(hass)
+    await client.send_json({"id": 1, "type": "smarther_hybrid/schedules"})
+    msg = await client.receive_json()
+    assert msg["result"]["netatmo_found"] is True
+    assert msg["result"]["homes"][0]["schedules"][0]["name"] == "Inverno"

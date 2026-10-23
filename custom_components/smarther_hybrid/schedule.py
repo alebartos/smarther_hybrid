@@ -2,6 +2,8 @@
 
 The Netatmo integration already keeps every home's schedules in memory
 (pyatmo objects); they are read from there, without extra cloud calls.
+Recent Home Assistant versions keep its data handler in the config entry's
+runtime_data, older ones in hass.data["netatmo"][entry_id].
 """
 
 from __future__ import annotations
@@ -18,15 +20,24 @@ NETATMO_DATA_HANDLER = "netatmo_data_handler"
 THERM_SCHEDULE = "therm"
 
 
+def _netatmo_accounts(hass: HomeAssistant) -> list[Any]:
+    legacy = hass.data.get(NETATMO_DOMAIN, {})
+    accounts: list[Any] = []
+    for entry in hass.config_entries.async_entries(NETATMO_DOMAIN):
+        handler = getattr(entry, "runtime_data", None)
+        if handler is None and isinstance(legacy.get(entry.entry_id), dict):
+            handler = legacy[entry.entry_id].get(NETATMO_DATA_HANDLER)
+        if (account := getattr(handler, "account", None)) is not None:
+            accounts.append(account)
+    return accounts
+
+
 def _netatmo_homes(hass: HomeAssistant) -> list[Any]:
-    homes: list[Any] = []
-    for entry_data in hass.data.get(NETATMO_DOMAIN, {}).values():
-        if not isinstance(entry_data, dict):
-            continue
-        handler = entry_data.get(NETATMO_DATA_HANDLER)
-        account = getattr(handler, "account", None)
-        homes.extend(getattr(account, "homes", {}).values())
-    return homes
+    return [
+        home
+        for account in _netatmo_accounts(hass)
+        for home in getattr(account, "homes", {}).values()
+    ]
 
 
 def _room_name(home: Any, room_id: str) -> str:
@@ -91,7 +102,13 @@ def ws_schedules(
     msg: dict[str, Any],
 ) -> None:
     """Send the heating schedules."""
-    connection.send_result(msg["id"], {"homes": heating_schedules(hass)})
+    connection.send_result(
+        msg["id"],
+        {
+            "homes": heating_schedules(hass),
+            "netatmo_found": bool(_netatmo_accounts(hass)),
+        },
+    )
 
 
 @websocket_api.websocket_command(
