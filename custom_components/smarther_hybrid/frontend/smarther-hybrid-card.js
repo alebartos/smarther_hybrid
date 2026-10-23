@@ -16,6 +16,12 @@
  */
 
 const CARD_TYPE = "smarther-hybrid-card";
+const EDITOR_TYPE = "smarther-hybrid-card-editor";
+
+const textFor = (hass) => {
+  const lang = ((hass && hass.language) || "en").split("-")[0];
+  return TEXT[lang] || TEXT.en;
+};
 
 const TEXT = {
   it: {
@@ -27,6 +33,8 @@ const TEXT = {
     hvac: "modalità",
     preset: "preset",
     missingEntity: "Specifica un'entità (entity)",
+    humidityEntity: "Sensore umidità (facoltativo)",
+    humidityHelp: "Se vuoto, usa l'umidità dell'entità termostato.",
     humidity: "Umidità",
   },
   en: {
@@ -38,6 +46,8 @@ const TEXT = {
     hvac: "mode",
     preset: "preset",
     missingEntity: "Please define an entity",
+    humidityEntity: "Humidity sensor (optional)",
+    humidityHelp: "When empty, the thermostat entity's humidity is used.",
     humidity: "Humidity",
   },
 };
@@ -124,6 +134,10 @@ const loadHelpers = () => {
 loadHelpers();
 
 class SmartherHybridCard extends HTMLElement {
+  static getConfigElement() {
+    return document.createElement(EDITOR_TYPE);
+  }
+
   static getStubConfig(hass) {
     const entity =
       Object.keys(hass.states).find(
@@ -186,8 +200,7 @@ class SmartherHybridCard extends HTMLElement {
   }
 
   _t(key) {
-    const lang = (this._hass && this._hass.language) || "en";
-    return (TEXT[lang.split("-")[0]] || TEXT.en)[key];
+    return textFor(this._hass)[key];
   }
 
   _render() {
@@ -295,6 +308,97 @@ class SmartherHybridCard extends HTMLElement {
     // Features can appear or change size after a state update.
     requestAnimationFrame(() => this._position());
   }
+}
+
+/*
+ * Visual editor: Home Assistant's own thermostat card editor (entity, name,
+ * features…) plus a humidity sensor picker. The thermostat editor only
+ * accepts its own options, so it gets the config without ours and its
+ * changes are merged back.
+ */
+class SmartherHybridCardEditor extends HTMLElement {
+  setConfig(config) {
+    this._config = config;
+    this._build().then(() => this._sync());
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (this._native) this._native.hass = hass;
+    if (this._form) {
+      this._form.hass = hass;
+      this._form.computeLabel = (field) => textFor(hass).humidityEntity;
+      this._form.computeHelper = () => textFor(hass).humidityHelp;
+    }
+  }
+
+  async _build() {
+    if (this._building) return this._building;
+    this._building = (async () => {
+      // Make sure the thermostat card (and its editor) is loaded.
+      const helpers = await loadHelpers();
+      if (helpers && !customElements.get("hui-thermostat-card")) {
+        helpers.createCardElement({ type: "thermostat", entity: this._config.entity });
+      }
+      await customElements.whenDefined("hui-thermostat-card");
+      this._native = await customElements
+        .get("hui-thermostat-card")
+        .getConfigElement();
+      this._native.addEventListener("config-changed", (ev) => {
+        ev.stopPropagation();
+        const { humidity_entity } = this._config;
+        this._emit({
+          ...ev.detail.config,
+          type: `custom:${CARD_TYPE}`,
+          ...(humidity_entity ? { humidity_entity } : {}),
+        });
+      });
+
+      this._form = document.createElement("ha-form");
+      this._form.schema = [
+        {
+          name: "humidity_entity",
+          selector: { entity: { domain: "sensor", device_class: "humidity" } },
+        },
+      ];
+      this._form.addEventListener("value-changed", (ev) => {
+        ev.stopPropagation();
+        const config = { ...this._config };
+        const value = ev.detail.value.humidity_entity;
+        if (value) config.humidity_entity = value;
+        else delete config.humidity_entity;
+        this._emit(config);
+      });
+
+      const spacer = document.createElement("div");
+      spacer.style.height = "16px";
+      this.replaceChildren(this._native, spacer, this._form);
+      if (this._hass) this.hass = this._hass;
+    })();
+    return this._building;
+  }
+
+  _sync() {
+    if (!this._native || !this._config) return;
+    const { type, humidity_entity, ...inner } = this._config;
+    this._native.setConfig({ ...inner, type: "thermostat" });
+    this._form.data = { humidity_entity: humidity_entity || "" };
+  }
+
+  _emit(config) {
+    this._config = config;
+    this.dispatchEvent(
+      new CustomEvent("config-changed", {
+        detail: { config },
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+}
+
+if (!customElements.get(EDITOR_TYPE)) {
+  customElements.define(EDITOR_TYPE, SmartherHybridCardEditor);
 }
 
 if (!customElements.get(CARD_TYPE)) {

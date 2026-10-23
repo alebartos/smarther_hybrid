@@ -92,6 +92,8 @@ features:
     style: dropdown
 ```
 
+La card ha l'**editor visuale**: è quello della card termostato di Home Assistant (entità, nome, funzionalità come modalità e preset…) con in più il campo **Sensore umidità**. In alternativa puoi usare lo YAML.
+
 Tutte le altre opzioni della card termostato (`name`, `features`, `show_current_as_primary`…) funzionano allo stesso modo.
 
 ### Sincronizzazione
