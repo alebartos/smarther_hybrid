@@ -7,8 +7,7 @@
             "state": {
               "frost_guard": "mdi:snowflake-thermometer",
               "manual": "mdi:gesture-tap",
-              "schedule": "mdi:clock-outline",
-              "hold": "mdi:lock-outline"
+              "schedule": "mdi:clock-outline"
             }
           }
         }
