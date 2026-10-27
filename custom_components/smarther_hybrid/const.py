@@ -61,6 +61,8 @@ ATTR_PENDING = "pending"
 NETATMO_DOMAIN = "netatmo"
 # Netatmo entity service: cancel the room's manual change (back to schedule).
 NETATMO_SERVICE_CLEAR_TEMPERATURE_SETTING = "clear_temperature_setting"
+# Warn in the log when a command is still unconfirmed after this long.
+STUCK_WARNING_SECONDS = 300
 # A preset Netatmo accepted but never reported stops counting after this.
 ACCEPTED_TIMEOUT_SECONDS = 600
 # Setpoints closer than this count as confirmed.

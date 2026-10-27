@@ -151,6 +151,20 @@ room: Soggiorno              # facoltativo, se il programma ha più stanze
 
 I dati vengono da quelli che l'integrazione Netatmo ha già in memoria (nessuna chiamata in più al cloud per leggerli) e si aggiornano ogni minuto. L'integrazione Netatmo però rilegge l'**elenco** dei programmi solo ogni qualche ora: un programma appena creato nell'app compare premendo **↻** sulla card, che lo chiede a Netatmo. Consiglio: prova le prime modifiche su un **programma duplicato** creato dall'app.
 
+## Log
+
+- Se un comando resta **non confermato per più di 5 minuti**, nel log di Home Assistant compare un avviso con cosa si sta aspettando, **chi ha mandato l'ultimo comando** e lo stato riportato da Netatmo e HomeKit.
+- Per i dettagli (ogni comando con il nome di chi l'ha mandato, ogni preset inviato a Netatmo, ogni interruzione del mantenimento con il motivo) attiva temporaneamente il debug:
+
+```yaml
+logger:
+  default: warning
+  logs:
+    custom_components.smarther_hybrid: debug
+```
+
+I messaggi di debug non vengono salvati se il debug non è attivo, quindi non occupano spazio.
+
 ## Limiti noti
 
 - **Senza internet** funzionano stato, setpoint, Riscaldamento e Spento; Auto e i preset danno errore finché il cloud Netatmo non torna. Il mantenimento non può distinguere un ritorno al programma da un cambio fatto sul termostato, quindi adotta il nuovo valore.

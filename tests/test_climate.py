@@ -582,3 +582,35 @@ async def test_accepted_preset_expires(hass, calls):
     assert hass.states.get(ENTITY).attributes["sync_state"] == "accepted"
     await advance(hass, 601)  # advance() counts from now, not cumulatively
     assert hass.states.get(ENTITY).attributes["sync_state"] == "synced"
+
+
+async def test_log_names_who_sent_the_command(hass, calls, caplog):
+    import logging
+
+    from homeassistant.core import Context
+
+    caplog.set_level(logging.DEBUG, logger="custom_components.smarther_hybrid")
+    await setup(hass)
+    user = await hass.auth.async_create_user("Rossano")
+    await hass.services.async_call(
+        "climate",
+        "set_temperature",
+        {"entity_id": ENTITY, "temperature": 21},
+        blocking=True,
+        context=Context(user_id=user.id),
+    )
+    assert "setpoint 21.0° (manual change), by Rossano" in caplog.text
+
+    await service(hass, "set_hvac_mode", hvac_mode="heat")
+    await service(hass, "set_hvac_mode", hvac_mode="auto")
+    assert "ended: Auto chosen" in caplog.text
+
+
+async def test_warns_when_still_unconfirmed(hass, calls, caplog):
+    await setup(hass)
+    await service(hass, "set_preset_mode", preset_mode="away")
+    await advance(hass, 299)
+    assert "still waiting for confirmation" not in caplog.text
+    await advance(hass, 301)
+    assert "still waiting for confirmation after 5 minutes" in caplog.text
+    assert "'preset': 'away'" in caplog.text

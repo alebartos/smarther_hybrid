@@ -94,6 +94,7 @@ from .const import (
     PRESET_FROST_GUARD,
     PRESET_SCHEDULE,
     SETTABLE_PRESETS,
+    STUCK_WARNING_SECONDS,
     TEMP_STEP,
     TEMP_TOLERANCE,
     TURN_ON_SETTLE_SECONDS,
@@ -166,6 +167,9 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
         self._netatmo_pending: str | None = None
         self._unsub_netatmo: CALLBACK_TYPE | None = None
         self._unsub_accepted: CALLBACK_TYPE | None = None
+        self._unsub_stuck: CALLBACK_TYPE | None = None
+        # Who sent the last command, for the log.
+        self._last_by = "unknown"
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -207,6 +211,7 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
         self.async_on_remove(self._cancel_settle)
         self.async_on_remove(self._cancel_netatmo_queue)
         self.async_on_remove(self._cancel_accepted_timeout)
+        self.async_on_remove(self._cancel_stuck_warning)
 
         # Catch up on anything that happened while Home Assistant was down.
         if self._hold_temperature is not None:
@@ -308,6 +313,44 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
             self._sync.forget("preset")
         self._sync.available = self.available
         self._sync.notify()
+        if self._sync.synced:
+            self._cancel_stuck_warning()
+        elif self._unsub_stuck is None:
+            self._unsub_stuck = async_call_later(
+                self.hass, STUCK_WARNING_SECONDS, self._warn_stuck
+            )
+
+    @callback
+    def _cancel_stuck_warning(self) -> None:
+        if self._unsub_stuck is not None:
+            self._unsub_stuck()
+            self._unsub_stuck = None
+
+    @callback
+    def _warn_stuck(self, _now: Any) -> None:
+        self._unsub_stuck = None
+        if self._sync.synced:
+            return
+        _LOGGER.warning(
+            "%s: still waiting for confirmation after %d minutes: %s "
+            "(last command by %s; Netatmo preset %s, HomeKit setpoint %s)",
+            self.entity_id,
+            STUCK_WARNING_SECONDS // 60,
+            {**self._sync.pending, **self._sync.accepted},
+            self._last_by,
+            self._netatmo_preset(aliases=False),
+            self.target_temperature,
+        )
+
+    async def _log_command(self, what: str) -> None:
+        """Debug-log a command with who sent it (a user, or an automation)."""
+        context = self._context
+        who = "an automation or script"
+        if context is not None and context.user_id:
+            user = await self.hass.auth.async_get_user(context.user_id)
+            who = user.name if user and user.name else context.user_id
+        self._last_by = who
+        _LOGGER.debug("%s: %s, by %s", self.entity_id, what, who)
 
     @staticmethod
     def _expectation(service: str, data: dict[str, Any]) -> tuple[str, Any]:
@@ -336,6 +379,7 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
 
     async def _netatmo_apply(self, preset_mode: str) -> None:
         """Send a preset to Netatmo; accepted once the cloud call succeeds."""
+        _LOGGER.debug("%s: sending preset %s to Netatmo", self.entity_id, preset_mode)
         self._sync.forget("preset")
         self._sync.pending["preset"] = preset_mode
         try:
@@ -479,7 +523,11 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
 
     # -- hold ----------------------------------------------------------------
 
-    def _stop_hold(self) -> None:
+    def _stop_hold(self, reason: str) -> None:
+        if self._hold_temperature is not None:
+            _LOGGER.debug(
+                "%s: hold at %s° ended: %s", self.entity_id, self._hold_temperature, reason
+            )
         self._hold_temperature = None
         self._cancel_settle()
 
@@ -506,7 +554,7 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
             return
         if target <= FROST_GUARD_TEMP:
             # Frost protection was chosen somewhere else: never hold it.
-            self._stop_hold()
+            self._stop_hold(f"frost setpoint {target}° set elsewhere")
             self.async_write_ha_state()
         elif self._netatmo_preset() == PRESET_SCHEDULE:
             # The manual change expired and the schedule took over.
@@ -548,7 +596,7 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
             if not self._homekit_on():
                 # Turned off somewhere else: the hold no longer applies.
                 if _usable(self._homekit):
-                    self._stop_hold()
+                    self._stop_hold("HomeKit reports the thermostat off")
             elif self.target_temperature != self._hold_temperature:
                 self._schedule_settle()
         self.async_write_ha_state()
@@ -565,7 +613,7 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
             self._last_preset = preset
         if self._hold_temperature is not None:
             if self._netatmo_preset() in HOLD_BREAKING_PRESETS:
-                self._stop_hold()
+                self._stop_hold(f"Netatmo reports preset {preset}")
             elif (
                 self._netatmo_preset() == PRESET_SCHEDULE
                 and self.target_temperature != self._hold_temperature
@@ -651,6 +699,9 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
             await self.async_set_hvac_mode(hvac_mode)
         if (temperature := kwargs.get(ATTR_TEMPERATURE)) is None:
             return
+        await self._log_command(
+            f"setpoint {temperature}° ({'hold' if self._hold_temperature is not None else 'manual change'})"
+        )
         if self._hold_temperature is not None:
             self._hold_temperature = float(temperature)
             self._cancel_settle()
@@ -661,8 +712,9 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Auto (last preset, via Netatmo), Heat (hold) or Off (frost protection)."""
+        await self._log_command(f"mode {hvac_mode}")
         if hvac_mode == HVACMode.OFF:
-            self._stop_hold()
+            self._stop_hold("Off chosen")
             self._cancel_netatmo_queue()
             self._off_requested = True
             self._off_since = dt_util.utcnow()
@@ -674,7 +726,7 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
                 raise HomeAssistantError(
                     "Netatmo is unavailable: Auto needs the Netatmo cloud"
                 )
-            self._stop_hold()
+            self._stop_hold("Auto chosen")
             self._off_requested = False
             await self._ensure_homekit_on()
             # Always re-send, so the thermostat gets the preset again.
@@ -716,7 +768,8 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
             raise HomeAssistantError(
                 "Netatmo is unavailable: presets need the Netatmo cloud"
             )
-        self._stop_hold()
+        await self._log_command(f"preset {preset_mode}")
+        self._stop_hold(f"preset {preset_mode} chosen")
         self._off_requested = False
         self._last_preset = preset_mode
         await self._ensure_homekit_on()
