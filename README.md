@@ -125,7 +125,7 @@ Un comando è "confermato" quando la sorgente riporta il valore inviato:
 | Setpoint, Riscaldamento/Spento, rinvio del mantenimento | **HomeKit** riporta quel valore (risposta del termostato, in locale) |
 | Preset e Auto | accettato quando il **cloud Netatmo** risponde OK (🟠), confermato quando **Netatmo** riporta quel preset (🟢) |
 
-Un comando rifiutato resta rosso finché non ne mandi un altro dello stesso tipo. Un comando superato da un altro (es. un preset in coda annullato da Spento) non conta più. L'entità espone `synced`, `sync_state` (`synced`/`accepted`/`pending`) e `pending`; c'è anche il sensore binario **"… sincronizzato"**, utile per le automazioni (es. avviso se resta spento per più di 10 minuti).
+Un comando rifiutato resta rosso finché non ne mandi un altro dello stesso tipo. Un preset accettato da Netatmo non tiene il pallino arancione oltre **10 minuti**, e smette subito di contare se nel frattempo arriva una nuova temperatura o lo spegnimento (Netatmo riporterebbe "manuale" o "spento", mai quel preset). Un comando superato da un altro (es. un preset in coda annullato da Spento) non conta più. L'entità espone `synced`, `sync_state` (`synced`/`accepted`/`pending`) e `pending`; c'è anche il sensore binario **"… sincronizzato"**, utile per le automazioni (es. avviso se resta spento per più di 10 minuti).
 
 ## Card del programma
 

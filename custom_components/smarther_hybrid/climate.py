@@ -63,6 +63,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    ACCEPTED_TIMEOUT_SECONDS,
     ATTR_HOLD_ACTIVE,
     ATTR_HOLD_TEMPERATURE,
     ATTR_LAST_PRESET,
@@ -164,6 +165,7 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
         self._netatmo_last_sent: datetime | None = None
         self._netatmo_pending: str | None = None
         self._unsub_netatmo: CALLBACK_TYPE | None = None
+        self._unsub_accepted: CALLBACK_TYPE | None = None
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -204,6 +206,7 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
             )
         self.async_on_remove(self._cancel_settle)
         self.async_on_remove(self._cancel_netatmo_queue)
+        self.async_on_remove(self._cancel_accepted_timeout)
 
         # Catch up on anything that happened while Home Assistant was down.
         if self._hold_temperature is not None:
@@ -321,6 +324,10 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
         """
         key, expected = self._expectation(service, data)
         self._sync.forget(key)
+        if key == "temperature" or expected == HVACMode.OFF:
+            # A new setpoint or Off makes a preset sent before moot: Netatmo
+            # will report "manual" or "off", never that preset.
+            self._sync.forget("preset")
         self._sync.pending[key] = expected
         try:
             await self._call(service, entity_id, **data)
@@ -348,7 +355,34 @@ class SmartherHybridClimate(ClimateEntity, RestoreEntity):
             raise
         self._sync.pending.pop("preset", None)
         self._sync.accepted["preset"] = preset_mode
+        self._start_accepted_timeout(preset_mode)
         self.async_write_ha_state()
+
+    @callback
+    def _cancel_accepted_timeout(self) -> None:
+        if self._unsub_accepted is not None:
+            self._unsub_accepted()
+            self._unsub_accepted = None
+
+    @callback
+    def _start_accepted_timeout(self, preset_mode: str) -> None:
+        """Stop waiting for Netatmo to report an accepted preset after a while.
+
+        If something changed the room meanwhile, Netatmo never reports it and
+        the sync dot would stay orange forever.
+        """
+        self._cancel_accepted_timeout()
+
+        @callback
+        def _expired(_now: Any) -> None:
+            self._unsub_accepted = None
+            if self._sync.accepted.get("preset") == preset_mode:
+                self._sync.forget("preset")
+                self.async_write_ha_state()
+
+        self._unsub_accepted = async_call_later(
+            self.hass, ACCEPTED_TIMEOUT_SECONDS, _expired
+        )
 
     @property
     def hvac_mode(self) -> HVACMode | None:

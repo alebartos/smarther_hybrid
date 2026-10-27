@@ -560,3 +560,25 @@ async def test_entities_belong_to_one_device(hass, calls):
     # Names are unchanged.
     assert hass.states.get(ENTITY).name == "Smarther Soggiorno"
     assert hass.states.get(SYNCED).name == "Smarther Soggiorno sincronizzato"
+
+
+async def test_new_setpoint_supersedes_accepted_preset(hass, calls):
+    await setup(hass)
+    await service(hass, "set_preset_mode", preset_mode="away")
+    assert hass.states.get(ENTITY).attributes["sync_state"] == "accepted"
+    # An automation sets a temperature: Netatmo will report "manual", not away.
+    await service(hass, "set_temperature", temperature=21.5)
+    set_homekit(hass, temperature=21.5)
+    set_netatmo(hass, preset="manual", state="heat")
+    await hass.async_block_till_done()
+    assert hass.states.get(ENTITY).attributes["sync_state"] == "synced"
+
+
+async def test_accepted_preset_expires(hass, calls):
+    await setup(hass)
+    await service(hass, "set_preset_mode", preset_mode="away")
+    assert hass.states.get(ENTITY).attributes["sync_state"] == "accepted"
+    await advance(hass, 599)
+    assert hass.states.get(ENTITY).attributes["sync_state"] == "accepted"
+    await advance(hass, 601)  # advance() counts from now, not cumulatively
+    assert hass.states.get(ENTITY).attributes["sync_state"] == "synced"
